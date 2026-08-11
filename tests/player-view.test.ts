@@ -31,8 +31,10 @@ function snapshot(overrides: Partial<PlayerCardSnapshot> = {}): PlayerCardSnapsh
     next: track("next"),
     positionMs: 90_000,
     queueSize: 3,
+    repeatMode: "queue",
     status: "playing",
     updatedAt: new Date("2026-08-11T12:00:00Z"),
+    volume: 75,
     voiceChannelId: "voice-1",
     ...overrides
   };
@@ -56,6 +58,8 @@ describe("buildPlayerCard", () => {
     );
     expect(embed?.footer?.text).toContain("다음 · track-next");
     expect(embed?.footer?.text).toContain("자동재생 ON");
+    expect(embed?.footer?.text).toContain("반복 전체");
+    expect(embed?.footer?.text).toContain("볼륨 75%");
   });
 
   it("핵심 제어 5개를 아이콘 한 줄로 표시하고 대기열과 Ko-fi를 보조 줄에 둔다", () => {

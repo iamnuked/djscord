@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { commandDefinitions } from "../src/discord/commands.js";
 
 describe("commandDefinitions", () => {
-  it("플레이어, 장르, 사용법을 포함한 한국어 명령 9개를 등록한다", () => {
+  it("재생 제어, 장르, 사용법을 포함한 한국어 명령 15개를 등록한다", () => {
     const commands = commandDefinitions.map((command) => command.toJSON());
 
     expect(commands.map(({ name }) => name)).toEqual([
@@ -11,6 +11,12 @@ describe("commandDefinitions", () => {
       "일시정지",
       "계속",
       "스킵",
+      "반복",
+      "셔플",
+      "삭제",
+      "이동",
+      "탐색",
+      "볼륨",
       "대기열",
       "자동재생",
       "정지",
@@ -20,7 +26,7 @@ describe("commandDefinitions", () => {
   });
 
   it("장르 명령은 필수 이름과 5~30 범위의 선택 곡수를 받는다", () => {
-    const genre = commandDefinitions[7]?.toJSON();
+    const genre = commandDefinitions[13]?.toJSON();
 
     expect(genre?.options?.[0]).toMatchObject({
       name: "이름",
@@ -47,7 +53,7 @@ describe("commandDefinitions", () => {
   });
 
   it("자동재생 명령은 켜기와 끄기 선택지만 제공한다", () => {
-    const autoplay = commandDefinitions[5]?.toJSON();
+    const autoplay = commandDefinitions[11]?.toJSON();
 
     expect(autoplay?.options?.[0]).toMatchObject({
       choices: [
@@ -61,10 +67,43 @@ describe("commandDefinitions", () => {
   });
 
   it("사용법 명령은 별도 입력값 없이 실행한다", () => {
-    expect(commandDefinitions[8]?.toJSON()).toMatchObject({
+    expect(commandDefinitions[14]?.toJSON()).toMatchObject({
       description: "음악 봇의 명령과 플레이어 사용법을 확인합니다.",
       name: "사용법",
       options: []
+    });
+  });
+
+  it("반복·삭제·이동·탐색·볼륨 입력 범위를 정의한다", () => {
+    const commands = new Map(
+      commandDefinitions.map((command) => {
+        const json = command.toJSON();
+        return [json.name, json] as const;
+      })
+    );
+
+    expect(commands.get("반복")?.options?.[0]).toMatchObject({
+      choices: [
+        { name: "끄기", value: "off" },
+        { name: "한 곡", value: "track" },
+        { name: "대기열 전체", value: "queue" }
+      ],
+      name: "모드",
+      required: true,
+      type: 3
+    });
+    expect(commands.get("삭제")?.options?.[0]).toMatchObject({ min_value: 1, name: "번호" });
+    expect(commands.get("이동")?.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ min_value: 1, name: "곡" }),
+        expect.objectContaining({ min_value: 1, name: "위치" })
+      ])
+    );
+    expect(commands.get("탐색")?.options?.[0]).toMatchObject({ name: "시간", required: true });
+    expect(commands.get("볼륨")?.options?.[0]).toMatchObject({
+      max_value: 100,
+      min_value: 0,
+      name: "값"
     });
   });
 });
