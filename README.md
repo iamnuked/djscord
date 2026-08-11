@@ -6,6 +6,8 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
 
 - `/재생`: 곡명 검색, YouTube 영상 URL, 최대 50곡의 YouTube 재생목록
 - `/장르`: 장르 이름으로 YouTube 검색·Mix 후보를 만들고, 미리보기에서 곡을 제거한 뒤 대기열에 추가
+  - K-pop은 BTS·BLACKPINK·aespa·IVE·Stray Kids·NewJeans의 대표 시드를 라운드 로빈으로 섞어 특정 검색 결과에 치우치는 현상을 줄임
+  - 등록되지 않은 장르는 기존 YouTube Music 검색과 일반 YouTube 검색 폴백을 그대로 사용
 - `/일시정지`, `/계속`, `/스킵`, `/정지`
 - `/대기열`: 현재 곡과 다음 10곡 표시
 - `/자동재생`: 마지막 곡 기반 YouTube Mix 추천 켜기·끄기

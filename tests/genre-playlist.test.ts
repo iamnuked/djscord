@@ -50,6 +50,8 @@ describe("GenrePlaylistService", () => {
         const metadata = seedMetadata.get(candidate.identifier);
         if (metadata !== undefined) {
           Object.assign(candidate, metadata);
+        } else {
+          Object.assign(candidate, { author: "unrelated artist", title: "unrelated official MV" });
         }
       }
     }
