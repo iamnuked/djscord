@@ -28,6 +28,37 @@ function result(tracks: MusicTrack[], loadType: TrackLoadResult["loadType"] = "s
 }
 
 describe("GenrePlaylistService", () => {
+  it("private 상태를 사용하는 실제 Loader의 메서드 바인딩을 유지한다", async () => {
+    class StatefulLoader implements TrackLoader {
+      readonly #results = [
+        result([track("seed"), track("search-2")]),
+        result([track("seed"), track("mix-1")], "playlist")
+      ];
+      #index = 0;
+
+      async load(): Promise<TrackLoadResult> {
+        const loaded = this.#results[this.#index];
+        this.#index += 1;
+        return loaded ?? result([], "empty");
+      }
+    }
+
+    const service = new GenrePlaylistService(new StatefulLoader());
+
+    const generated = await service.generate({
+      count: 5,
+      excludedTrackIds: new Set(),
+      genre: "재즈",
+      requesterId: "user-1"
+    });
+
+    expect(generated.tracks.map(({ identifier }) => identifier)).toEqual([
+      "seed",
+      "mix-1",
+      "search-2"
+    ]);
+  });
+
   it("대표곡, Mix, 나머지 검색 결과 순으로 후보를 만들고 반복 곡을 제외한다", async () => {
     const load = vi
       .fn<TrackLoader["load"]>()
