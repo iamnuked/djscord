@@ -2,7 +2,6 @@ import { z } from "zod";
 
 const environmentSchema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID가 필요합니다."),
-  DISCORD_GUILD_ID: z.string().min(1, "DISCORD_GUILD_ID가 필요합니다."),
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN이 필요합니다."),
   KOFI_URL: z
     .string()

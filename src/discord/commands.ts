@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from "discord.js";
+import { PermissionFlagsBits, SlashCommandBuilder } from "discord.js";
 
 export const commandDefinitions = [
   new SlashCommandBuilder()
@@ -95,6 +95,23 @@ export const commandDefinitions = [
         .setDescription("만들 곡 수 (기본 20곡)")
         .setMinValue(5)
         .setMaxValue(30)
+    ),
+  new SlashCommandBuilder()
+    .setName("설정")
+    .setDescription("이 서버의 음악 재생 기본값을 확인하거나 변경합니다.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addIntegerOption((option) =>
+      option
+        .setName("기본볼륨")
+        .setDescription("새 재생 세션의 기본 볼륨 (0~100)")
+        .setMinValue(0)
+        .setMaxValue(100)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("자동재생")
+        .setDescription("새 재생 세션의 자동 추천 기본값")
+        .addChoices({ name: "켜기", value: "on" }, { name: "끄기", value: "off" })
     ),
   new SlashCommandBuilder()
     .setName("사용법")

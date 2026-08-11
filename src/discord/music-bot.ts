@@ -259,7 +259,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
     idleTimers.cancel(player.guildId);
     pausedForEmptyChannel.delete(player.guildId);
     autoplayFailures.delete(player.guildId);
-    states.delete(player.guildId);
+    states.resetSession(player.guildId);
     void playerMessages.finish(player.guildId).catch((error: unknown) => {
       console.error("종료된 플레이어 메시지를 갱신하지 못했습니다.", error);
     });
@@ -358,6 +358,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
       case "장르":
         await handleGenre(interaction);
         break;
+      case "설정":
+        await handleSettings(interaction);
+        break;
       case "사용법":
         await interaction.reply(createHelpReply());
         break;
@@ -408,7 +411,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
           selfMute: false,
           textChannelId: interaction.channelId,
           voiceChannelId: latestVoice.voiceChannelId,
-          volume: 100
+          volume: states.getOrCreate(guildId).defaultVolume
         });
       const availableSlots = Math.max(0, MANUAL_QUEUE_LIMIT - manualQueueLength(player));
       const accepted = selectedTracks.slice(0, availableSlots);
@@ -655,7 +658,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
           selfMute: false,
           textChannelId: consumed.context.interaction.channelId,
           voiceChannelId: voice.voiceChannelId,
-          volume: 100
+          volume: states.getOrCreate(draft.guildId).defaultVolume
         });
       idleTimers.cancel(player.guildId);
       if (!player.connected) {
@@ -987,6 +990,43 @@ export function createMusicBot(config: AppConfig): MusicBot {
       await playerMessages.finish(player.guildId);
     });
     await interaction.reply("재생을 종료하고 음성 채널에서 나왔습니다.");
+  }
+
+  async function handleSettings(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) !== true) {
+      await interaction.reply({
+        content: "서버 설정을 변경하려면 `서버 관리` 권한이 필요합니다.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    const guildId = interaction.guildId!;
+    const defaultVolume = interaction.options.getInteger("기본볼륨");
+    const autoplayOption = interaction.options.getString("자동재생");
+    const autoplayDefault =
+      autoplayOption === null ? undefined : autoplayOption === "on";
+
+    const state = await guildTasks.run(guildId, async () => {
+      const updated = states.updateSettings(guildId, {
+        ...(autoplayDefault === undefined ? {} : { autoplayDefault }),
+        ...(defaultVolume === null ? {} : { defaultVolume })
+      });
+      const player = lavalink.getPlayer(guildId);
+      if (player !== undefined) {
+        if (defaultVolume !== null) {
+          await player.setVolume(defaultVolume);
+        }
+        await refreshPlayerMessage(player);
+      }
+      return updated;
+    });
+
+    const changed = defaultVolume !== null || autoplayDefault !== undefined;
+    await interaction.reply({
+      content: `${changed ? "서버 음악 설정을 저장했습니다.\n" : "현재 서버 음악 설정입니다.\n"}기본 볼륨: **${state.defaultVolume}%**\n자동재생 기본값: **${state.autoplayDefault ? "켜기" : "끄기"}**`,
+      flags: MessageFlags.Ephemeral
+    });
   }
 
   async function handlePlayerButton(interaction: ButtonInteraction): Promise<void> {

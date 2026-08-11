@@ -16,6 +16,13 @@ export interface MusicTrack {
 }
 
 export interface GuildPlaybackState {
+  autoplayDefault: boolean;
   autoplayEnabled: boolean;
+  defaultVolume: number;
   recentTrackIds: string[];
+}
+
+export interface GuildSettings {
+  autoplayDefault: boolean;
+  defaultVolume: number;
 }
