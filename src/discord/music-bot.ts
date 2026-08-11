@@ -39,6 +39,14 @@ import { AutoplayService } from "../music/autoplay-service.js";
 import { GenrePlaylistService } from "../music/genre-playlist.js";
 import { GuildTaskQueue } from "../music/guild-task-queue.js";
 import { IdleTimerManager } from "../music/idle-timer.js";
+import {
+  formatRepeatMode,
+  moveQueuedTrack,
+  parseSeekPosition,
+  removeQueuedTrack,
+  type PlaybackRepeatMode,
+  validateSeekPosition
+} from "../music/playback-controls.js";
 import { TrackResolverService } from "../music/track-resolver.js";
 import { GenreDraftStore, type GenreDraft } from "./genre-draft.js";
 import {
@@ -319,6 +327,24 @@ export function createMusicBot(config: AppConfig): MusicBot {
         break;
       case "스킵":
         await handleSkip(interaction);
+        break;
+      case "반복":
+        await handleRepeat(interaction);
+        break;
+      case "셔플":
+        await handleShuffle(interaction);
+        break;
+      case "삭제":
+        await handleRemove(interaction);
+        break;
+      case "이동":
+        await handleMove(interaction);
+        break;
+      case "탐색":
+        await handleSeek(interaction);
+        break;
+      case "볼륨":
+        await handleVolume(interaction);
         break;
       case "대기열":
         await handleQueue(interaction);
@@ -828,6 +854,85 @@ export function createMusicBot(config: AppConfig): MusicBot {
     await interaction.reply("현재 곡을 건너뛰었습니다.");
   }
 
+  async function handleRepeat(interaction: ChatInputCommandInteraction): Promise<void> {
+    const player = await requireControllablePlayer(interaction);
+    if (player === undefined) return;
+    const mode = interaction.options.getString("모드", true);
+    if (!isPlaybackRepeatMode(mode)) {
+      throw new Error("지원하지 않는 반복 모드입니다.");
+    }
+    await guildTasks.run(player.guildId, async () => {
+      await player.setRepeatMode(mode);
+      await refreshPlayerMessage(player);
+    });
+    await interaction.reply(`반복 모드를 **${formatRepeatMode(mode)}**으로 설정했습니다.`);
+  }
+
+  async function handleShuffle(interaction: ChatInputCommandInteraction): Promise<void> {
+    const player = await requireControllablePlayer(interaction);
+    if (player === undefined) return;
+    if (player.queue.tracks.length < 2) {
+      await interaction.reply({
+        content: "순서를 섞으려면 대기열에 다음 곡이 2곡 이상 있어야 합니다.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+    await guildTasks.run(player.guildId, async () => {
+      await player.queue.shuffle();
+      await refreshPlayerMessage(player);
+    });
+    await interaction.reply(`다음 ${player.queue.tracks.length}곡의 순서를 섞었습니다.`);
+  }
+
+  async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
+    const player = await requireControllablePlayer(interaction);
+    if (player === undefined) return;
+    const position = interaction.options.getInteger("번호", true);
+    await guildTasks.run(player.guildId, async () => {
+      await removeQueuedTrack(player.queue, position);
+      await refreshPlayerMessage(player);
+    });
+    await interaction.reply(`대기열 ${position}번 곡을 삭제했습니다.`);
+  }
+
+  async function handleMove(interaction: ChatInputCommandInteraction): Promise<void> {
+    const player = await requireControllablePlayer(interaction);
+    if (player === undefined) return;
+    const fromPosition = interaction.options.getInteger("곡", true);
+    const toPosition = interaction.options.getInteger("위치", true);
+    await guildTasks.run(player.guildId, async () => {
+      await moveQueuedTrack(player.queue, fromPosition, toPosition);
+      await refreshPlayerMessage(player);
+    });
+    await interaction.reply(`대기열 ${fromPosition}번 곡을 ${toPosition}번 위치로 옮겼습니다.`);
+  }
+
+  async function handleSeek(interaction: ChatInputCommandInteraction): Promise<void> {
+    const player = await requireControllablePlayer(interaction);
+    if (player === undefined || player.queue.current === null) return;
+    const positionMs = validateSeekPosition(
+      fromLavalinkTrack(player.queue.current),
+      parseSeekPosition(interaction.options.getString("시간", true))
+    );
+    await guildTasks.run(player.guildId, async () => {
+      await player.seek(positionMs);
+      await refreshPlayerMessage(player);
+    });
+    await interaction.reply(`재생 위치를 **${formatMilliseconds(positionMs)}**로 이동했습니다.`);
+  }
+
+  async function handleVolume(interaction: ChatInputCommandInteraction): Promise<void> {
+    const player = await requireControllablePlayer(interaction);
+    if (player === undefined) return;
+    const volume = interaction.options.getInteger("값", true);
+    await guildTasks.run(player.guildId, async () => {
+      await player.setVolume(volume);
+      await refreshPlayerMessage(player);
+    });
+    await interaction.reply(`볼륨을 **${volume}%**로 설정했습니다.`);
+  }
+
   async function handleQueue(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = lavalink.getPlayer(interaction.guildId!);
     if (player === undefined) {
@@ -1055,8 +1160,10 @@ export function createMusicBot(config: AppConfig): MusicBot {
       next,
       positionMs: player.position,
       queueSize: player.queue.tracks.length,
+      repeatMode: player.repeatMode,
       status: current === null ? "idle" : player.paused ? "paused" : "playing",
       updatedAt: new Date(),
+      volume: player.volume,
       voiceChannelId: player.voiceChannelId
     };
   }
@@ -1167,6 +1274,10 @@ function manualQueueLength(player: Player): number {
     }
     return count + (fromLavalinkTrack(track).origin === "recommended" ? 0 : 1);
   }, 0);
+}
+
+function isPlaybackRepeatMode(value: string): value is PlaybackRepeatMode {
+  return value === "off" || value === "track" || value === "queue";
 }
 
 function genreCustomId(

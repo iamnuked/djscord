@@ -13,6 +13,61 @@ export const commandDefinitions = [
   new SlashCommandBuilder().setName("일시정지").setDescription("현재 곡을 일시정지합니다."),
   new SlashCommandBuilder().setName("계속").setDescription("일시정지된 곡을 이어서 재생합니다."),
   new SlashCommandBuilder().setName("스킵").setDescription("현재 곡을 건너뜁니다."),
+  new SlashCommandBuilder()
+    .setName("반복")
+    .setDescription("현재 곡 또는 대기열 전체 반복을 설정합니다.")
+    .addStringOption((option) =>
+      option
+        .setName("모드")
+        .setDescription("반복 방식")
+        .setRequired(true)
+        .addChoices(
+          { name: "끄기", value: "off" },
+          { name: "한 곡", value: "track" },
+          { name: "대기열 전체", value: "queue" }
+        )
+    ),
+  new SlashCommandBuilder().setName("셔플").setDescription("대기열의 다음 곡 순서를 섞습니다."),
+  new SlashCommandBuilder()
+    .setName("삭제")
+    .setDescription("대기열에서 곡을 제거합니다.")
+    .addIntegerOption((option) =>
+      option
+        .setName("번호")
+        .setDescription("/대기열에 표시된 다음 곡 번호")
+        .setRequired(true)
+        .setMinValue(1)
+    ),
+  new SlashCommandBuilder()
+    .setName("이동")
+    .setDescription("대기열의 곡 순서를 변경합니다.")
+    .addIntegerOption((option) =>
+      option.setName("곡").setDescription("이동할 곡 번호").setRequired(true).setMinValue(1)
+    )
+    .addIntegerOption((option) =>
+      option.setName("위치").setDescription("옮길 위치 번호").setRequired(true).setMinValue(1)
+    ),
+  new SlashCommandBuilder()
+    .setName("탐색")
+    .setDescription("현재 곡의 재생 위치를 이동합니다.")
+    .addStringOption((option) =>
+      option
+        .setName("시간")
+        .setDescription("예: 90, 1:30, 1:02:03")
+        .setRequired(true)
+        .setMaxLength(8)
+    ),
+  new SlashCommandBuilder()
+    .setName("볼륨")
+    .setDescription("이 서버의 현재 재생 볼륨을 조절합니다.")
+    .addIntegerOption((option) =>
+      option
+        .setName("값")
+        .setDescription("0(음소거)~100")
+        .setRequired(true)
+        .setMinValue(0)
+        .setMaxValue(100)
+    ),
   new SlashCommandBuilder().setName("대기열").setDescription("현재 곡과 다음 곡을 확인합니다."),
   new SlashCommandBuilder()
     .setName("자동재생")

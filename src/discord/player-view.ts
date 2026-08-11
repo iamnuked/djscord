@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 
 import type { MusicTrack } from "../domain/types.js";
+import { formatRepeatMode, type PlaybackRepeatMode } from "../music/playback-controls.js";
 
 const PROGRESS_SEGMENTS = 12;
 
@@ -15,8 +16,10 @@ export interface PlayerCardSnapshot {
   next: MusicTrack | null;
   positionMs: number;
   queueSize: number;
+  repeatMode: PlaybackRepeatMode;
   status: "playing" | "paused" | "idle" | "ended";
   updatedAt: Date;
+  volume: number;
   voiceChannelId: string | null;
 }
 
@@ -175,7 +178,7 @@ function formatVoiceChannel(voiceChannelId: string | null): string {
 
 function formatPlayerFooter(snapshot: PlayerCardSnapshot): string {
   const next = snapshot.next === null ? "없음" : truncate(snapshot.next.title, 48);
-  return `다음 · ${next}  •  대기열 ${snapshot.queueSize}곡  •  자동재생 ${snapshot.autoplayEnabled ? "ON" : "OFF"}  •  ${formatUpdatedAt(snapshot.updatedAt)}`;
+  return `다음 · ${next}  •  대기열 ${snapshot.queueSize}곡  •  반복 ${formatRepeatMode(snapshot.repeatMode)}  •  볼륨 ${snapshot.volume}%  •  자동재생 ${snapshot.autoplayEnabled ? "ON" : "OFF"}  •  ${formatUpdatedAt(snapshot.updatedAt)}`;
 }
 
 function formatDuration(durationMs: number): string {

@@ -31,8 +31,10 @@ function snapshot(identifier: string, status: PlayerCardSnapshot["status"]): Pla
     next: null,
     positionMs: 0,
     queueSize: 0,
+    repeatMode: "off",
     status,
     updatedAt: new Date("2026-08-11T12:00:00Z"),
+    volume: 100,
     voiceChannelId: "voice-1"
   };
 }
