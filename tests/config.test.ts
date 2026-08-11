@@ -32,4 +32,13 @@ describe("loadConfig", () => {
       loadConfig({ ...requiredEnvironment, KOFI_URL: "https://example.com/test-user" })
     ).toThrow("KOFI_URL은 https://ko-fi.com/ 주소여야 합니다.");
   });
+
+  it("Last.fm API 키는 선택적으로 읽되 빈 값은 거부한다", () => {
+    expect(
+      loadConfig({ ...requiredEnvironment, LASTFM_API_KEY: "lastfm-api-key" }).LASTFM_API_KEY
+    ).toBe("lastfm-api-key");
+    expect(() => loadConfig({ ...requiredEnvironment, LASTFM_API_KEY: "" })).toThrow(
+      "LASTFM_API_KEY는 빈 값일 수 없습니다."
+    );
+  });
 });

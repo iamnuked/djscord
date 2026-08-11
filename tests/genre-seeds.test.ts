@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   GENRE_SEED_PROFILES,
+  resolveLastFmGenreTag,
   resolveGenreSeedProfile
 } from "../src/music/genre-seeds.js";
 
@@ -37,5 +38,16 @@ describe("genre seed profiles", () => {
     );
 
     expect(new Set(normalized).size).toBe(normalized.length);
+  });
+
+  it.each([
+    ["재즈", "jazz"],
+    ["락", "rock"],
+    ["힙합", "hip-hop"],
+    ["알앤비", "rnb"],
+    ["제이팝", "j-pop"],
+    [" City Pop ", "city pop"]
+  ])("Last.fm용 장르 태그 %s를 %s로 정규화한다", (genre, expected) => {
+    expect(resolveLastFmGenreTag(genre)).toBe(expected);
   });
 });

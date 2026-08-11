@@ -28,6 +28,65 @@ function result(tracks: MusicTrack[], loadType: TrackLoadResult["loadType"] = "s
 }
 
 describe("GenrePlaylistService", () => {
+  it("등록되지 않은 장르는 Last.fm 상위 아티스트를 여러 YouTube Mix 시드로 사용한다", async () => {
+    const getTopArtists = vi.fn().mockResolvedValue(["Miles Davis", "John Coltrane"]);
+    const load = vi.fn<TrackLoader["load"]>(async (query, _requesterId, source) => {
+      if (source !== undefined) {
+        const artist = query.replace(" official music video", "");
+        return result([
+          {
+            ...track(`${artist.toLocaleLowerCase("en-US").replaceAll(" ", "-")}-seed`),
+            author: artist,
+            title: `${artist} official video`
+          }
+        ]);
+      }
+
+      const seedId = new URL(query).searchParams.get("v");
+      return result(seedId === null ? [] : [track(seedId), track(`${seedId}-mix`)], "playlist");
+    });
+    const service = new GenrePlaylistService({ load }, { getTopArtists });
+
+    const generated = await service.generate({
+      count: 5,
+      excludedTrackIds: new Set(),
+      genre: "재즈",
+      requesterId: "user-1"
+    });
+
+    expect(getTopArtists).toHaveBeenCalledWith("jazz", 6);
+    expect(generated.source).toBe("lastfm");
+    expect(generated.tracks.map(({ identifier }) => identifier)).toEqual([
+      "miles-davis-seed",
+      "john-coltrane-seed",
+      "miles-davis-seed-mix",
+      "john-coltrane-seed-mix"
+    ]);
+  });
+
+  it("Last.fm 조회가 실패하면 기존 YouTube 장르 검색으로 폴백한다", async () => {
+    const getTopArtists = vi.fn().mockRejectedValue(new Error("rate limited"));
+    const load = vi
+      .fn<TrackLoader["load"]>()
+      .mockResolvedValueOnce(result([track("youtube-seed"), track("youtube-search-2")]))
+      .mockResolvedValueOnce(result([track("youtube-seed"), track("youtube-mix")], "playlist"));
+    const service = new GenrePlaylistService({ load }, { getTopArtists });
+
+    const generated = await service.generate({
+      count: 5,
+      excludedTrackIds: new Set(),
+      genre: "rock",
+      requesterId: "user-1"
+    });
+
+    expect(generated.source).toBe("youtube");
+    expect(generated.tracks.map(({ identifier }) => identifier)).toEqual([
+      "youtube-seed",
+      "youtube-mix",
+      "youtube-search-2"
+    ]);
+  });
+
   it("K-pop 대표 아티스트의 유효한 시드를 찾고 각 Mix를 라운드 로빈으로 합친다", async () => {
     const seedResults = new Map<string, MusicTrack[]>([
       ["BTS official music video", [track("wrong-bts"), track("bts-seed")]],
