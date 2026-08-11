@@ -55,5 +55,19 @@ describe("selectRecommendation", () => {
 
     expect(selected).toBeUndefined();
   });
-});
 
+  it("싫어요 곡과 반복해서 싫어요를 받은 아티스트를 제외한다", () => {
+    const disliked = track("disliked");
+    const blockedArtist = { ...track("blocked"), author: "blocked artist" };
+    const selected = selectRecommendation({
+      candidates: [disliked, blockedArtist, track("fresh")],
+      currentIdentifier: "seed",
+      excludedAuthors: new Set(["blocked artist"]),
+      excludedIdentifiers: new Set(["disliked"]),
+      queuedIdentifiers: new Set(),
+      recentIdentifiers: new Set()
+    });
+
+    expect(selected?.identifier).toBe("fresh");
+  });
+});

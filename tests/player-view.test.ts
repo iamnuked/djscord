@@ -28,6 +28,7 @@ function snapshot(overrides: Partial<PlayerCardSnapshot> = {}): PlayerCardSnapsh
   return {
     autoplayEnabled: true,
     current: track("current", { origin: "genre" }),
+    feedback: null,
     next: track("next"),
     positionMs: 90_000,
     queueSize: 3,
@@ -62,7 +63,7 @@ describe("buildPlayerCard", () => {
     expect(embed?.footer?.text).toContain("볼륨 75%");
   });
 
-  it("핵심 제어 5개를 아이콘 한 줄로 표시하고 대기열과 Ko-fi를 보조 줄에 둔다", () => {
+  it("핵심 제어 5개를 아이콘 한 줄로 표시하고 대기열·추천 피드백·Ko-fi를 보조 줄에 둔다", () => {
     const card = buildPlayerCard(snapshot(), "session-1", {
       supportUrl: "https://ko-fi.com/test-user"
     });
@@ -74,9 +75,11 @@ describe("buildPlayerCard", () => {
     expect(
       firstRow.map((component) => ("emoji" in component ? component.emoji?.name : undefined))
     ).toEqual(["⏸️", "⏭️", "⏹️", "🔄", "✨"]);
-    expect(secondRow).toHaveLength(2);
+    expect(secondRow).toHaveLength(4);
     expect(secondRow[0]).toMatchObject({ label: "대기열" });
-    expect(secondRow[1]).toMatchObject({
+    expect(secondRow[1]).toMatchObject({ emoji: { name: "👍" } });
+    expect(secondRow[2]).toMatchObject({ emoji: { name: "👎" } });
+    expect(secondRow[3]).toMatchObject({
       label: "Ko-fi",
       style: ButtonStyle.Link,
       url: "https://ko-fi.com/test-user"
@@ -98,8 +101,20 @@ describe("buildPlayerCard", () => {
     const card = buildPlayerCard(snapshot(), "session-1");
     const components = card.components.flatMap((row) => row.toJSON().components);
 
-    expect(components).toHaveLength(6);
+    expect(components).toHaveLength(8);
     expect(components.some(({ style }) => style === ButtonStyle.Link)).toBe(false);
+  });
+
+  it("현재 곡의 추천 피드백 버튼을 활성 스타일로 표시한다", () => {
+    const liked = buildPlayerCard(snapshot({ feedback: "like" }), "session-1");
+    const disliked = buildPlayerCard(snapshot({ feedback: "dislike" }), "session-1");
+
+    expect(liked.components[1]?.toJSON().components[1]).toMatchObject({
+      style: ButtonStyle.Success
+    });
+    expect(disliked.components[1]?.toJSON().components[2]).toMatchObject({
+      style: ButtonStyle.Danger
+    });
   });
 
   it("종료 상태에서는 모든 버튼을 비활성화한다", () => {

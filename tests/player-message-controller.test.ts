@@ -28,6 +28,7 @@ function snapshot(identifier: string, status: PlayerCardSnapshot["status"]): Pla
   return {
     autoplayEnabled: true,
     current: status === "ended" ? null : track(identifier),
+    feedback: null,
     next: null,
     positionMs: 0,
     queueSize: 0,

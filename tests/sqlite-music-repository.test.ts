@@ -104,4 +104,26 @@ describe("SqliteMusicRepository", () => {
     ).toThrow("100곡");
     expect(() => repository.listFavorites("user-1", 0)).toThrow("조회 개수");
   });
+
+  it("서버 공용 추천 피드백과 최신 좋아요 시드를 저장한다", () => {
+    repository.setRecommendationFeedback("guild-1", track("liked"), "like");
+    repository.setRecommendationFeedback("guild-1", track("bad-1"), "dislike");
+    repository.setRecommendationFeedback("guild-1", track("bad-2"), "dislike");
+
+    const profile = repository.getRecommendationProfile("guild-1");
+
+    expect(repository.getRecommendationFeedback("guild-1", "liked")).toBe("like");
+    expect(profile.preferredTrack?.identifier).toBe("liked");
+    expect(profile.dislikedTrackIds).toEqual(new Set(["bad-1", "bad-2"]));
+    expect(profile.blockedAuthors).toEqual(new Set(["artist"]));
+  });
+
+  it("같은 곡의 추천 피드백을 바꾸고 서버별로 격리한다", () => {
+    repository.setRecommendationFeedback("guild-1", track("a"), "like");
+    repository.setRecommendationFeedback("guild-1", track("a"), "dislike");
+    repository.setRecommendationFeedback("guild-2", track("a"), "like");
+
+    expect(repository.getRecommendationFeedback("guild-1", "a")).toBe("dislike");
+    expect(repository.getRecommendationFeedback("guild-2", "a")).toBe("like");
+  });
 });

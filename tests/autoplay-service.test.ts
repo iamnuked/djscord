@@ -72,5 +72,28 @@ describe("AutoplayService", () => {
 
     expect(selected).toBeUndefined();
   });
-});
 
+  it("좋아요 곡을 Mix 시드로 사용하고 싫어요 후보를 제외한다", async () => {
+    const load = vi.fn<TrackLoader["load"]>().mockResolvedValue({
+      loadType: "playlist",
+      tracks: [track("liked-seed"), track("disliked"), track("fresh")]
+    } satisfies TrackLoadResult);
+    const service = new AutoplayService({ load });
+
+    const selected = await service.recommend({
+      enabled: true,
+      excludedTrackIds: new Set(["disliked"]),
+      lastTrack: track("last"),
+      preferredSeed: track("liked-seed"),
+      queuedTrackIds: new Set(),
+      recentTrackIds: new Set()
+    });
+
+    expect(load).toHaveBeenCalledWith(
+      "https://www.youtube.com/watch?v=liked-seed&list=RDliked-seed",
+      "autoplay",
+      undefined
+    );
+    expect(selected?.identifier).toBe("fresh");
+  });
+});
