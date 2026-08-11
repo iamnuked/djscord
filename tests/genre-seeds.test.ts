@@ -1,0 +1,41 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  GENRE_SEED_PROFILES,
+  resolveGenreSeedProfile
+} from "../src/music/genre-seeds.js";
+
+describe("genre seed profiles", () => {
+  it.each(["k-pop", "KPOP", "k pop", "케이팝"])(
+    "%s를 동일한 K-pop 시드 프로필로 정규화한다",
+    (genre) => {
+      expect(resolveGenreSeedProfile(genre)?.id).toBe("k-pop");
+    }
+  );
+
+  it("K-pop에 서로 다른 대표 아티스트 시드를 관리한다", () => {
+    const profile = resolveGenreSeedProfile("k-pop");
+
+    expect(profile?.seeds.map(({ artist }) => artist)).toEqual([
+      "BTS",
+      "BLACKPINK",
+      "aespa",
+      "IVE",
+      "Stray Kids",
+      "NewJeans"
+    ]);
+  });
+
+  it("등록되지 않은 자유 입력 장르는 시드 프로필을 강제하지 않는다", () => {
+    expect(resolveGenreSeedProfile("city pop night drive")).toBeUndefined();
+  });
+
+  it("프로필 ID와 별칭이 서로 충돌하지 않는다", () => {
+    const aliases = GENRE_SEED_PROFILES.flatMap((profile) => [profile.id, ...profile.aliases]);
+    const normalized = aliases.map((alias) =>
+      alias.normalize("NFKC").toLocaleLowerCase("en-US").replace(/[\s_-]+/g, "")
+    );
+
+    expect(new Set(normalized).size).toBe(normalized.length);
+  });
+});

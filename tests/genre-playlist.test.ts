@@ -28,6 +28,70 @@ function result(tracks: MusicTrack[], loadType: TrackLoadResult["loadType"] = "s
 }
 
 describe("GenrePlaylistService", () => {
+  it("K-pop 대표 아티스트의 유효한 시드를 찾고 각 Mix를 라운드 로빈으로 합친다", async () => {
+    const seedResults = new Map<string, MusicTrack[]>([
+      ["BTS official music video", [track("wrong-bts"), track("bts-seed")]],
+      ["BLACKPINK official music video", [track("wrong-blackpink"), track("blackpink-seed")]],
+      ["aespa official music video", [track("wrong-aespa"), track("aespa-seed")]],
+      ["IVE official music video", [track("wrong-ive"), track("ive-seed")]],
+      ["Stray Kids official music video", [track("wrong-skz"), track("skz-seed")]],
+      ["NewJeans official music video", [track("wrong-newjeans"), track("newjeans-seed")]]
+    ]);
+    const seedMetadata = new Map<string, { author: string; title: string }>([
+      ["bts-seed", { author: "BTS", title: "BTS official MV" }],
+      ["blackpink-seed", { author: "BLACKPINK", title: "BLACKPINK official MV" }],
+      ["aespa-seed", { author: "aespa", title: "aespa official MV" }],
+      ["ive-seed", { author: "IVE", title: "IVE official MV" }],
+      ["skz-seed", { author: "Stray Kids", title: "Stray Kids official MV" }],
+      ["newjeans-seed", { author: "NewJeans", title: "NewJeans official MV" }]
+    ]);
+    for (const tracks of seedResults.values()) {
+      for (const candidate of tracks) {
+        const metadata = seedMetadata.get(candidate.identifier);
+        if (metadata !== undefined) {
+          Object.assign(candidate, metadata);
+        }
+      }
+    }
+
+    const load = vi.fn<TrackLoader["load"]>(async (query, _requesterId, source) => {
+      if (source === "ytmsearch") {
+        return result(seedResults.get(query) ?? []);
+      }
+
+      const seedId = new URL(query).searchParams.get("v");
+      return result(
+        seedId === null
+          ? []
+          : [track(seedId), track(`${seedId}-mix-1`), track(`${seedId}-mix-2`)],
+        "playlist"
+      );
+    });
+    const service = new GenrePlaylistService({ load });
+
+    const generated = await service.generate({
+      count: 10,
+      excludedTrackIds: new Set(),
+      genre: "케이팝",
+      requesterId: "user-1"
+    });
+
+    expect(generated.tracks.map(({ identifier }) => identifier)).toEqual([
+      "bts-seed",
+      "blackpink-seed",
+      "aespa-seed",
+      "ive-seed",
+      "skz-seed",
+      "newjeans-seed",
+      "bts-seed-mix-1",
+      "blackpink-seed-mix-1",
+      "aespa-seed-mix-1",
+      "ive-seed-mix-1"
+    ]);
+    expect(load).not.toHaveBeenCalledWith("케이팝 음악", "user-1", "ytmsearch");
+    expect(generated.missingCount).toBe(0);
+  });
+
   it("private 상태를 사용하는 실제 Loader의 메서드 바인딩을 유지한다", async () => {
     class StatefulLoader implements TrackLoader {
       readonly #results = [
