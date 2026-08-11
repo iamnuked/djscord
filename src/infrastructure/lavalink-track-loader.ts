@@ -37,10 +37,10 @@ export class LavalinkTrackLoader implements TrackLoader {
     );
     const origin: TrackOrigin = requesterId === "autoplay" ? "recommended" : "requested";
     const tracks = result.tracks.flatMap((rawTrack) => {
-      if (!("encoded" in rawTrack) || rawTrack.encoded === undefined) {
+      if ("resolve" in rawTrack || rawTrack.encoded === undefined) {
         return [];
       }
-      const track = rawTrack as Track;
+      const track = rawTrack;
       const key = trackKey(track.info.identifier, track.encoded);
       this.#rawTracks.set(key, track);
       return [toMusicTrack(track, origin, requesterId)];
@@ -48,7 +48,8 @@ export class LavalinkTrackLoader implements TrackLoader {
 
     return {
       loadType: result.loadType as TrackLoadType,
-      tracks
+      tracks,
+      unavailableCount: result.tracks.length - tracks.length
     };
   }
 
@@ -94,7 +95,8 @@ export function fromLavalinkTrack(track: Track): MusicTrack {
 
 function toMusicTrack(track: Track, origin: TrackOrigin, requesterId: string): MusicTrack {
   const base = fromLavalinkTrack(track);
-  const { requesterId: _existingRequesterId, ...trackWithoutRequester } = base;
+  const trackWithoutRequester = { ...base };
+  delete trackWithoutRequester.requesterId;
   return {
     ...trackWithoutRequester,
     origin,

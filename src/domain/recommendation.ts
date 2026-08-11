@@ -25,10 +25,10 @@ export function selectRecommendation({
     return undefined;
   }
 
-  const { requesterId: _requesterId, ...trackWithoutRequester } = selected;
+  const trackWithoutRequester = { ...selected };
+  delete trackWithoutRequester.requesterId;
   return {
     ...trackWithoutRequester,
     origin: "recommended"
   };
 }
-

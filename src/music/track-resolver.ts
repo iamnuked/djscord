@@ -9,6 +9,7 @@ export interface ResolvedTracks {
   kind: "selection" | "tracks";
   skipped: number;
   tracks: MusicTrack[];
+  unavailable: number;
 }
 
 export class TrackResolverService {
@@ -33,8 +34,9 @@ export class TrackResolverService {
 
       return {
         kind: "selection",
-        skipped: Math.max(0, result.length - SEARCH_SELECTION_LIMIT),
-        tracks: result.slice(0, SEARCH_SELECTION_LIMIT)
+        skipped: 0,
+        tracks: result.slice(0, SEARCH_SELECTION_LIMIT),
+        unavailable: 0
       };
     }
 
@@ -47,7 +49,8 @@ export class TrackResolverService {
     return {
       kind: "tracks",
       skipped: Math.max(0, result.tracks.length - limit),
-      tracks: result.tracks.slice(0, limit)
+      tracks: result.tracks.slice(0, limit),
+      unavailable: result.unavailableCount ?? 0
     };
   }
 
@@ -56,4 +59,3 @@ export class TrackResolverService {
     return result.tracks;
   }
 }
-

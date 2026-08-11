@@ -18,8 +18,12 @@ function track(identifier: string): MusicTrack {
   };
 }
 
-function result(tracks: MusicTrack[], loadType: TrackLoadResult["loadType"] = "search") {
-  return { loadType, tracks } satisfies TrackLoadResult;
+function result(
+  tracks: MusicTrack[],
+  loadType: TrackLoadResult["loadType"] = "search",
+  unavailableCount = 0
+) {
+  return { loadType, tracks, unavailableCount } satisfies TrackLoadResult;
 }
 
 describe("TrackResolverService", () => {
@@ -34,6 +38,7 @@ describe("TrackResolverService", () => {
     expect(load).toHaveBeenCalledWith("아이유 좋은 날", "user-1", "ytmsearch");
     expect(resolved.kind).toBe("selection");
     expect(resolved.tracks).toHaveLength(5);
+    expect(resolved.skipped).toBe(0);
   });
 
   it("YouTube Music 결과가 없으면 일반 YouTube로 폴백한다", async () => {
@@ -70,7 +75,7 @@ describe("TrackResolverService", () => {
 
   it("재생목록은 50곡으로 자르고 생략 수를 반환한다", async () => {
     const load = vi.fn<TrackLoader["load"]>().mockResolvedValue(
-      result(Array.from({ length: 60 }, (_, index) => track(String(index))), "playlist")
+      result(Array.from({ length: 60 }, (_, index) => track(String(index))), "playlist", 2)
     );
     const resolver = new TrackResolverService({ load });
 
@@ -82,6 +87,7 @@ describe("TrackResolverService", () => {
     expect(resolved.kind).toBe("tracks");
     expect(resolved.tracks).toHaveLength(50);
     expect(resolved.skipped).toBe(10);
+    expect(resolved.unavailable).toBe(2);
   });
 
   it("검색 결과가 없으면 사용자용 오류를 던진다", async () => {
@@ -93,4 +99,3 @@ describe("TrackResolverService", () => {
     );
   });
 });
-

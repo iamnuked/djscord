@@ -1,4 +1,4 @@
-import type { SearchResult, Track } from "lavalink-client";
+import type { SearchResult, Track, UnresolvedSearchResult, UnresolvedTrack } from "lavalink-client";
 import { describe, expect, it, vi } from "vitest";
 
 import { LavalinkTrackLoader } from "../src/infrastructure/lavalink-track-loader.js";
@@ -65,5 +65,28 @@ describe("LavalinkTrackLoader", () => {
 
     expect(result.tracks[0]).toMatchObject({ origin: "recommended" });
     expect(result.tracks[0]?.requesterId).toBeUndefined();
+  });
+
+  it("해석되지 않은 트랙은 정상 트랙으로 오인하지 않고 재생 불가로 센다", async () => {
+    const unavailableTrack = {
+      encoded: "encoded-private",
+      info: { title: "Private video" },
+      pluginInfo: {},
+      requester: { id: "user-1" },
+      resolve: vi.fn()
+    } satisfies UnresolvedTrack;
+    const search = vi.fn().mockResolvedValue({
+      exception: null,
+      loadType: "playlist",
+      playlist: null,
+      pluginInfo: {},
+      tracks: [unavailableTrack]
+    } satisfies UnresolvedSearchResult);
+    const loader = new LavalinkTrackLoader({ search });
+
+    const result = await loader.load("playlist-url", "user-1", undefined);
+
+    expect(result.tracks).toEqual([]);
+    expect(result.unavailableCount).toBe(1);
   });
 });

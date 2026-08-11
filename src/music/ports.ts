@@ -6,9 +6,9 @@ export type TrackLoadType = "empty" | "error" | "playlist" | "search" | "track";
 export interface TrackLoadResult {
   loadType: TrackLoadType;
   tracks: MusicTrack[];
+  unavailableCount?: number;
 }
 
 export interface TrackLoader {
   load(query: string, requesterId: string, source?: SearchSource): Promise<TrackLoadResult>;
 }
-

@@ -3,6 +3,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     coverage: {
+      exclude: [
+        "src/deploy-commands.ts",
+        "src/index.ts",
+        "src/discord/music-bot.ts"
+      ],
+      include: ["src/**/*.ts"],
       provider: "v8",
       reporter: ["text", "json-summary"],
       thresholds: {
@@ -16,4 +22,3 @@ export default defineConfig({
     globals: true
   }
 });
-

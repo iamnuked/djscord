@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "commands:deploy": "tsx src/deploy-commands.ts",
+    "commands:deploy:prod": "node dist/deploy-commands.js",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint .",
     "start": "node dist/index.js",
