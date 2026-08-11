@@ -14,10 +14,10 @@ export interface GeneratedGenrePlaylist {
 }
 
 export class GenrePlaylistService {
-  readonly #load: TrackLoader["load"];
+  readonly #loader: Pick<TrackLoader, "load">;
 
-  constructor(options: Pick<TrackLoader, "load">) {
-    this.#load = options.load;
+  constructor(loader: Pick<TrackLoader, "load">) {
+    this.#loader = loader;
   }
 
   async generate(options: GenerateGenrePlaylistOptions): Promise<GeneratedGenrePlaylist> {
@@ -32,14 +32,18 @@ export class GenrePlaylistService {
 
     let searchTracks: MusicTrack[] = [];
     try {
-      const result = await this.#load(`${genre} 음악`, options.requesterId, "ytmsearch");
+      const result = await this.#loader.load(
+        `${genre} 음악`,
+        options.requesterId,
+        "ytmsearch"
+      );
       searchTracks = result.tracks.filter(isPlayableYoutubeTrack);
     } catch {
       searchTracks = [];
     }
 
     if (searchTracks.length === 0) {
-      const result = await this.#load(`${genre} music`, options.requesterId, "ytsearch");
+      const result = await this.#loader.load(`${genre} music`, options.requesterId, "ytsearch");
       searchTracks = result.tracks.filter(isPlayableYoutubeTrack);
     }
 
@@ -51,7 +55,7 @@ export class GenrePlaylistService {
     let mixTracks: MusicTrack[] = [];
     try {
       const mixUrl = `https://www.youtube.com/watch?v=${seed.identifier}&list=RD${seed.identifier}`;
-      const result = await this.#load(mixUrl, options.requesterId, undefined);
+      const result = await this.#loader.load(mixUrl, options.requesterId, undefined);
       mixTracks = result.tracks.filter(isPlayableYoutubeTrack);
     } catch {
       mixTracks = [];
