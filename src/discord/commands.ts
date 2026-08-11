@@ -40,5 +40,8 @@ export const commandDefinitions = [
         .setDescription("만들 곡 수 (기본 20곡)")
         .setMinValue(5)
         .setMaxValue(30)
-    )
+    ),
+  new SlashCommandBuilder()
+    .setName("사용법")
+    .setDescription("음악 봇의 명령과 플레이어 사용법을 확인합니다.")
 ];

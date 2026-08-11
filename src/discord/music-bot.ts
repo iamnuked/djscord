@@ -46,6 +46,7 @@ import {
   type PlayerMessagePayload
 } from "./player-message-controller.js";
 import type { PlayerCardSnapshot } from "./player-view.js";
+import { createHelpReply } from "./help-view.js";
 import { formatQueue } from "./queue-view.js";
 import { validateVoiceAccess } from "./voice-access.js";
 
@@ -330,6 +331,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
         break;
       case "장르":
         await handleGenre(interaction);
+        break;
+      case "사용법":
+        await interaction.reply(createHelpReply());
         break;
       default:
         await interaction.reply({
