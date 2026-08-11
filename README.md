@@ -58,7 +58,7 @@ LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
 
 `LAVALINK_PASSWORD`는 Node.js 봇과 Lavalink가 서로를 인증할 때 사용합니다. 외부 서비스의 비밀번호가 아니라 이 프로젝트 안에서 직접 정하는 값입니다.
 
-`KOFI_URL`은 선택값입니다. `https://ko-fi.com/아이디` 형태의 본인 후원 페이지를 넣으면 플레이어 카드에 `☕ Ko-fi` 링크 버튼이 나타납니다. 설정하지 않으면 후원 버튼만 숨겨지고 음악 기능은 그대로 동작합니다.
+`KOFI_URL`은 선택값입니다. `https://ko-fi.com/아이디` 형태의 본인 후원 페이지를 넣으면 플레이어 카드에 `☕ 서버비 지원` 링크 버튼이 나타납니다. 설정하지 않으면 후원 버튼만 숨겨지고 음악 기능은 그대로 동작합니다.
 
 `LASTFM_API_KEY`도 선택값입니다. [Last.fm API 계정 페이지](https://www.last.fm/api/account/create)에서 키를 발급해 넣으면 K-pop 외 장르도 해당 태그의 상위 아티스트 6명을 대표 시드로 사용합니다. 같은 장르 결과는 프로세스 메모리에 24시간 보관해 API 호출을 줄입니다. 키가 없거나 Last.fm 요청이 실패하면 기존 YouTube 검색으로 자동 폴백합니다. Last.fm의 무료 API 이용은 기본적으로 비상업 용도이므로 공개·수익화 전에 [API 이용약관](https://www.last.fm/api/tos)을 확인해야 합니다.
 

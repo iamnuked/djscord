@@ -93,7 +93,7 @@ export function buildPlayerCard(
       new ButtonBuilder()
         .setURL(options.supportUrl)
         .setEmoji("☕")
-        .setLabel("Ko-fi")
+        .setLabel("서버비 지원")
         .setStyle(ButtonStyle.Link)
         .setDisabled(ended)
     );
