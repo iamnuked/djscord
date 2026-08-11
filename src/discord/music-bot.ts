@@ -34,6 +34,7 @@ import {
   fromLavalinkTrack,
   LavalinkTrackLoader
 } from "../infrastructure/lavalink-track-loader.js";
+import { LastFmGenreArtistProvider } from "../infrastructure/lastfm-genre-artist-provider.js";
 import { AutoplayService } from "../music/autoplay-service.js";
 import { GenrePlaylistService } from "../music/genre-playlist.js";
 import { GuildTaskQueue } from "../music/guild-task-queue.js";
@@ -60,6 +61,7 @@ interface GenreDraftContext {
   missingCount: number;
   node: LavalinkNode | NodeLinkNode;
   nodeId: string;
+  source: "curated" | "lastfm" | "youtube";
 }
 
 export interface MusicBot {
@@ -82,6 +84,10 @@ export function createMusicBot(config: AppConfig): MusicBot {
     ttlMs: GENRE_DRAFT_TIMEOUT_MS
   });
   const genreDraftTimeouts = new Map<string, NodeJS.Timeout>();
+  const genreArtistProvider =
+    config.LASTFM_API_KEY === undefined
+      ? undefined
+      : new LastFmGenreArtistProvider({ apiKey: config.LASTFM_API_KEY });
 
   const lavalink = new LavalinkManager({
     autoMove: true,
@@ -470,7 +476,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
     const genre = interaction.options.getString("이름", true);
     const count = interaction.options.getInteger("곡수") ?? 20;
     const searchContext = getSearchContext(guildId);
-    const service = new GenrePlaylistService(searchContext.loader);
+    const service = new GenrePlaylistService(searchContext.loader, genreArtistProvider);
     const generated = await service.generate({
       count,
       excludedTrackIds: collectExcludedTrackIds(guildId),
@@ -488,7 +494,8 @@ export function createMusicBot(config: AppConfig): MusicBot {
         loader: searchContext.loader,
         missingCount: generated.missingCount,
         node: searchContext.node,
-        nodeId: searchContext.node.options.id ?? "local-lavalink"
+        nodeId: searchContext.node.options.id ?? "local-lavalink",
+        source: generated.source
       },
       guildId,
       now: Date.now(),
@@ -673,7 +680,16 @@ export function createMusicBot(config: AppConfig): MusicBot {
       .addFields(
         { name: "페이지", value: `${draft.page + 1} / ${pageCount}`, inline: true },
         { name: "남은 곡", value: `${draft.tracks.length}곡`, inline: true },
-        { name: "제거 선택", value: `${draft.selectedTrackIds.size}곡`, inline: true }
+        { name: "제거 선택", value: `${draft.selectedTrackIds.size}곡`, inline: true },
+        ...(draft.context.source === "lastfm"
+          ? [
+              {
+                name: "대표 아티스트 데이터",
+                value: "[Last.fm](https://www.last.fm/)",
+                inline: true
+              }
+            ]
+          : [])
       );
     if (draft.context.missingCount > 0) {
       embed.setFooter({

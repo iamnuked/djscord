@@ -7,7 +7,8 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
 - `/재생`: 곡명 검색, YouTube 영상 URL, 최대 50곡의 YouTube 재생목록
 - `/장르`: 장르 이름으로 YouTube 검색·Mix 후보를 만들고, 미리보기에서 곡을 제거한 뒤 대기열에 추가
   - K-pop은 BTS·BLACKPINK·aespa·IVE·Stray Kids·NewJeans의 대표 시드를 라운드 로빈으로 섞어 특정 검색 결과에 치우치는 현상을 줄임
-  - 등록되지 않은 장르는 기존 YouTube Music 검색과 일반 YouTube 검색 폴백을 그대로 사용
+  - Last.fm API 키가 있으면 등록되지 않은 장르의 상위 아티스트 6명을 여러 Mix 시드로 사용
+  - Last.fm 장애나 API 키 미설정 시 기존 YouTube Music 검색과 일반 YouTube 검색 폴백을 그대로 사용
 - `/일시정지`, `/계속`, `/스킵`, `/정지`
 - `/대기열`: 현재 곡과 다음 10곡 표시
 - `/자동재생`: 마지막 곡 기반 YouTube Mix 추천 켜기·끄기
@@ -43,6 +44,7 @@ DISCORD_TOKEN=Discord에서_발급한_봇_토큰
 DISCORD_CLIENT_ID=애플리케이션_ID
 DISCORD_GUILD_ID=테스트_서버_ID
 KOFI_URL=https://ko-fi.com/내_Ko-fi_아이디
+LASTFM_API_KEY=Last.fm에서_발급한_API_키
 LAVALINK_HOST=lavalink
 LAVALINK_PORT=2333
 LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
@@ -51,6 +53,8 @@ LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
 `LAVALINK_PASSWORD`는 Node.js 봇과 Lavalink가 서로를 인증할 때 사용합니다. 외부 서비스의 비밀번호가 아니라 이 프로젝트 안에서 직접 정하는 값입니다.
 
 `KOFI_URL`은 선택값입니다. `https://ko-fi.com/아이디` 형태의 본인 후원 페이지를 넣으면 플레이어 카드에 `☕ Ko-fi` 링크 버튼이 나타납니다. 설정하지 않으면 후원 버튼만 숨겨지고 음악 기능은 그대로 동작합니다.
+
+`LASTFM_API_KEY`도 선택값입니다. [Last.fm API 계정 페이지](https://www.last.fm/api/account/create)에서 키를 발급해 넣으면 K-pop 외 장르도 해당 태그의 상위 아티스트 6명을 대표 시드로 사용합니다. 같은 장르 결과는 프로세스 메모리에 24시간 보관해 API 호출을 줄입니다. 키가 없거나 Last.fm 요청이 실패하면 기존 YouTube 검색으로 자동 폴백합니다. Last.fm의 무료 API 이용은 기본적으로 비상업 용도이므로 공개·수익화 전에 [API 이용약관](https://www.last.fm/api/tos)을 확인해야 합니다.
 
 ## 실행하기
 
@@ -112,6 +116,7 @@ lavalink             Lavalink와 YouTube 소스 플러그인 설정
 - `ButtonBuilder`와 `StringSelectMenuBuilder`는 `discord.js`의 메시지 입력 컴포넌트를 만드는 클래스입니다. 각각 `.setCustomId(...)`로 클릭 이벤트를 구분하고, `.setLabel(...)` 또는 `.addOptions(...)`로 화면 내용을 정합니다. 플레이어 제어 버튼과 장르 미리보기의 다중 선택 목록에 사용합니다.
 - `lavalink-client`는 Node.js 봇과 별도 Lavalink 오디오 서버를 연결하는 라이브러리입니다. `new LavalinkManager({ client, nodes, playerOptions, sendToShard })` 형태로 사용합니다. 여기서 `client`는 Discord 봇 ID, `nodes`는 Lavalink 주소·포트·비밀번호, `playerOptions`는 자동재생과 연결 복구 정책, `sendToShard`는 Lavalink가 만든 음성 연결 데이터를 Discord로 보내는 함수입니다.
 - `zod`는 실행 전에 환경 변수의 형태를 검사하는 검증 라이브러리입니다. `z.object({...}).safeParse(process.env)` 형태로 사용하며, 현재 코드는 Discord ID·토큰의 존재 여부, Lavalink 비밀번호 길이, 포트가 올바른 정수인지 검사합니다. 설정이 잘못되면 봇이 애매한 연결 오류 대신 어떤 값을 고쳐야 하는지 바로 알려줍니다.
+- `LastFmGenreArtistProvider`는 Last.fm의 `tag.getTopArtists` HTTP API를 이 봇의 장르 시드 형식으로 바꾸는 어댑터 클래스입니다. `new LastFmGenreArtistProvider({ apiKey })`로 생성하고 `getTopArtists(genre, limit)`에 장르 태그와 가져올 인원 수를 넘깁니다. 현재 코드는 API 키, 5초 타임아웃, 식별 가능한 User-Agent를 사용하며 결과를 24시간 캐시합니다. Node.js 내장 `fetch`가 HTTP 요청을 보내고, 기존 `zod`가 응답 구조를 검사합니다.
 - Lavalink는 Spring으로 직접 작성한 애플리케이션 코드가 아니라, 이미 빌드된 독립 Java 서버를 Docker 이미지로 실행합니다. 봇은 Lavalink에 검색·재생을 요청하고, Lavalink가 YouTube 소스 해석과 Discord용 오디오 전송을 담당합니다.
 
 ## 제한사항

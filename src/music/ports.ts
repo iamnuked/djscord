@@ -12,3 +12,7 @@ export interface TrackLoadResult {
 export interface TrackLoader {
   load(query: string, requesterId: string, source?: SearchSource): Promise<TrackLoadResult>;
 }
+
+export interface GenreArtistProvider {
+  getTopArtists(genre: string, limit: number): Promise<string[]>;
+}

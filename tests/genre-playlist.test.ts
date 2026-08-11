@@ -43,7 +43,12 @@ describe("GenrePlaylistService", () => {
       }
 
       const seedId = new URL(query).searchParams.get("v");
-      return result(seedId === null ? [] : [track(seedId), track(`${seedId}-mix`)], "playlist");
+      return result(
+        seedId === null
+          ? []
+          : [track(seedId), track(`${seedId}-mix-1`), track(`${seedId}-mix-2`)],
+        "playlist"
+      );
     });
     const service = new GenrePlaylistService({ load }, { getTopArtists });
 
@@ -59,8 +64,9 @@ describe("GenrePlaylistService", () => {
     expect(generated.tracks.map(({ identifier }) => identifier)).toEqual([
       "miles-davis-seed",
       "john-coltrane-seed",
-      "miles-davis-seed-mix",
-      "john-coltrane-seed-mix"
+      "miles-davis-seed-mix-1",
+      "john-coltrane-seed-mix-1",
+      "miles-davis-seed-mix-2"
     ]);
   });
 

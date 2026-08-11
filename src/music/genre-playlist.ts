@@ -1,10 +1,12 @@
 import type { MusicTrack } from "../domain/types.js";
 import {
+  resolveLastFmGenreTag,
   resolveGenreSeedProfile,
-  type GenreArtistSeed,
-  type GenreSeedProfile
+  type GenreArtistSeed
 } from "./genre-seeds.js";
-import type { TrackLoader } from "./ports.js";
+import type { GenreArtistProvider, TrackLoader } from "./ports.js";
+
+const LASTFM_ARTIST_LIMIT = 6;
 
 export interface GenerateGenrePlaylistOptions {
   count: number;
@@ -15,14 +17,17 @@ export interface GenerateGenrePlaylistOptions {
 
 export interface GeneratedGenrePlaylist {
   missingCount: number;
+  source: "curated" | "lastfm" | "youtube";
   tracks: MusicTrack[];
 }
 
 export class GenrePlaylistService {
+  readonly #artistProvider: GenreArtistProvider | undefined;
   readonly #loader: Pick<TrackLoader, "load">;
 
-  constructor(loader: Pick<TrackLoader, "load">) {
+  constructor(loader: Pick<TrackLoader, "load">, artistProvider?: GenreArtistProvider) {
     this.#loader = loader;
+    this.#artistProvider = artistProvider;
   }
 
   async generate(options: GenerateGenrePlaylistOptions): Promise<GeneratedGenrePlaylist> {
@@ -36,10 +41,26 @@ export class GenrePlaylistService {
     }
 
     const profile = resolveGenreSeedProfile(genre);
-    let candidates =
-      profile === undefined
-        ? []
-        : await this.#loadCuratedCandidates(profile, options.requesterId);
+    let seedSource: GeneratedGenrePlaylist["source"] =
+      profile === undefined ? "youtube" : "curated";
+    let artistSeeds: readonly GenreArtistSeed[] = profile?.seeds ?? [];
+
+    if (profile === undefined && this.#artistProvider !== undefined) {
+      try {
+        const artists = await this.#artistProvider.getTopArtists(
+          resolveLastFmGenreTag(genre),
+          LASTFM_ARTIST_LIMIT
+        );
+        artistSeeds = artists.map(toArtistSeed);
+        if (artistSeeds.length > 0) {
+          seedSource = "lastfm";
+        }
+      } catch {
+        artistSeeds = [];
+      }
+    }
+
+    let candidates = await this.#loadCuratedCandidates(artistSeeds, options.requesterId);
     let tracks = selectTracks(candidates, options);
 
     if (tracks.length < options.count) {
@@ -65,16 +86,17 @@ export class GenrePlaylistService {
 
     return {
       missingCount: options.count - tracks.length,
+      source: seedSource,
       tracks
     };
   }
 
   async #loadCuratedCandidates(
-    profile: GenreSeedProfile,
+    seedsToSearch: readonly GenreArtistSeed[],
     requesterId: string
   ): Promise<MusicTrack[]> {
     const searchedSeeds = await Promise.all(
-      profile.seeds.map(async (seed) => this.#loadArtistSeed(seed, requesterId))
+      seedsToSearch.map(async (seed) => this.#loadArtistSeed(seed, requesterId))
     );
     const seeds = searchedSeeds.filter((track): track is MusicTrack => track !== undefined);
 
@@ -150,6 +172,14 @@ export class GenrePlaylistService {
       return [];
     }
   }
+}
+
+function toArtistSeed(artist: string): GenreArtistSeed {
+  return {
+    aliases: [artist],
+    artist,
+    query: `${artist} official music video`
+  };
 }
 
 function selectTracks(
