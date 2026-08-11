@@ -1,7 +1,10 @@
 import type { SearchResult, Track, UnresolvedSearchResult, UnresolvedTrack } from "lavalink-client";
 import { describe, expect, it, vi } from "vitest";
 
-import { LavalinkTrackLoader } from "../src/infrastructure/lavalink-track-loader.js";
+import {
+  fromLavalinkTrack,
+  LavalinkTrackLoader
+} from "../src/infrastructure/lavalink-track-loader.js";
 
 function rawTrack(identifier: string): Track {
   return {
@@ -88,5 +91,27 @@ describe("LavalinkTrackLoader", () => {
 
     expect(result.tracks).toEqual([]);
     expect(result.unavailableCount).toBe(1);
+  });
+
+  it("장르 출처와 요청자를 Lavalink userData에 보존하고 다시 복원한다", async () => {
+    const sourceTrack = rawTrack("genre");
+    const search = vi.fn().mockResolvedValue({
+      exception: null,
+      loadType: "search",
+      playlist: null,
+      pluginInfo: {},
+      tracks: [sourceTrack]
+    } satisfies SearchResult);
+    const loader = new LavalinkTrackLoader({ search });
+    const result = await loader.load("genre", "user-1", "ytsearch");
+    const genreTrack = { ...result.tracks[0]!, origin: "genre" as const };
+
+    const raw = loader.toLavalinkTrack(genreTrack);
+
+    expect(raw.userData).toMatchObject({ origin: "genre", requesterId: "user-1" });
+    expect(fromLavalinkTrack(raw)).toMatchObject({
+      origin: "genre",
+      requesterId: "user-1"
+    });
   });
 });

@@ -33,5 +33,8 @@ describe("formatQueue", () => {
     expect(output).toContain("그 외 2곡");
     expect(output).not.toContain("track-10");
   });
-});
 
+  it("장르로 생성한 곡을 장르 출처로 표시한다", () => {
+    expect(formatQueue(track("genre", "genre"), [])).toContain("· 장르");
+  });
+});
