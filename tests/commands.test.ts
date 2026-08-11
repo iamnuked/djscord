@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { commandDefinitions } from "../src/discord/commands.js";
 
 describe("commandDefinitions", () => {
-  it("재생 제어, 장르, 서버 설정, 사용법을 포함한 한국어 명령 16개를 등록한다", () => {
+  it("재생 제어, 장르, 저장 음악, 서버 설정, 사용법을 포함한 한국어 명령 19개를 등록한다", () => {
     const commands = commandDefinitions.map((command) => command.toJSON());
 
     expect(commands.map(({ name }) => name)).toEqual([
@@ -22,6 +22,9 @@ describe("commandDefinitions", () => {
       "정지",
       "장르",
       "설정",
+      "좋아요",
+      "내음악",
+      "플레이리스트",
       "사용법"
     ]);
   });
@@ -68,11 +71,28 @@ describe("commandDefinitions", () => {
   });
 
   it("사용법 명령은 별도 입력값 없이 실행한다", () => {
-    expect(commandDefinitions[15]?.toJSON()).toMatchObject({
+    expect(commandDefinitions[18]?.toJSON()).toMatchObject({
       description: "음악 봇의 명령과 플레이어 사용법을 확인합니다.",
       name: "사용법",
       options: []
     });
+  });
+
+  it("플레이리스트는 저장·목록·재생·삭제 하위 명령을 제공한다", () => {
+    const playlist = commandDefinitions[17]?.toJSON();
+
+    expect(playlist?.name).toBe("플레이리스트");
+    expect(playlist?.options?.map(({ name }) => name)).toEqual(["저장", "목록", "재생", "삭제"]);
+    for (const option of playlist?.options ?? []) {
+      if (option.name === "목록") continue;
+      expect("options" in option ? option.options?.[0] : undefined).toMatchObject({
+        max_length: 40,
+        min_length: 1,
+        name: "이름",
+        required: true,
+        type: 3
+      });
+    }
   });
 
   it("설정 명령은 서버 관리자가 기본 볼륨과 자동재생 기본값을 선택적으로 바꾼다", () => {

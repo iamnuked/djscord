@@ -27,6 +27,9 @@ describe("createHelpReply", () => {
       "/대기열",
       "/자동재생",
       "/설정",
+      "/좋아요",
+      "/내음악",
+      "/플레이리스트",
       "/사용법"
     ]) {
       expect(text).toContain(command);

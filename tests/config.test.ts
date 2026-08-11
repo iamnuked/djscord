@@ -12,9 +12,15 @@ describe("loadConfig", () => {
   it("필수 값과 Lavalink 기본 연결 정보를 읽는다", () => {
     expect(loadConfig(requiredEnvironment)).toEqual({
       ...requiredEnvironment,
+      DATABASE_PATH: "/data/djscord.sqlite",
       LAVALINK_HOST: "lavalink",
       LAVALINK_PORT: 2333
     });
+  });
+
+  it("SQLite 파일 경로를 변경할 수 있다", () => {
+    expect(loadConfig({ ...requiredEnvironment, DATABASE_PATH: "/tmp/test.sqlite" }).DATABASE_PATH)
+      .toBe("/tmp/test.sqlite");
   });
 
   it("전역 명령 등록에는 길드 ID가 필요하지 않다", () => {
