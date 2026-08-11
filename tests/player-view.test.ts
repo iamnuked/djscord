@@ -63,7 +63,7 @@ describe("buildPlayerCard", () => {
     expect(embed?.footer?.text).toContain("볼륨 75%");
   });
 
-  it("핵심 제어 5개를 아이콘 한 줄로 표시하고 대기열·추천 피드백·Ko-fi를 보조 줄에 둔다", () => {
+  it("핵심 제어 5개를 아이콘 한 줄로 표시하고 대기열·추천 피드백·후원을 보조 줄에 둔다", () => {
     const card = buildPlayerCard(snapshot(), "session-1", {
       supportUrl: "https://ko-fi.com/test-user"
     });
@@ -80,7 +80,7 @@ describe("buildPlayerCard", () => {
     expect(secondRow[1]).toMatchObject({ emoji: { name: "👍" } });
     expect(secondRow[2]).toMatchObject({ emoji: { name: "👎" } });
     expect(secondRow[3]).toMatchObject({
-      label: "Ko-fi",
+      label: "서버비 지원",
       style: ButtonStyle.Link,
       url: "https://ko-fi.com/test-user"
     });
