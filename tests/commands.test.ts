@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { commandDefinitions } from "../src/discord/commands.js";
 
 describe("commandDefinitions", () => {
-  it("플레이어와 장르 기능을 포함한 한국어 명령 8개를 등록한다", () => {
+  it("플레이어, 장르, 사용법을 포함한 한국어 명령 9개를 등록한다", () => {
     const commands = commandDefinitions.map((command) => command.toJSON());
 
     expect(commands.map(({ name }) => name)).toEqual([
@@ -14,7 +14,8 @@ describe("commandDefinitions", () => {
       "대기열",
       "자동재생",
       "정지",
-      "장르"
+      "장르",
+      "사용법"
     ]);
   });
 
@@ -56,6 +57,14 @@ describe("commandDefinitions", () => {
       name: "모드",
       required: true,
       type: 3
+    });
+  });
+
+  it("사용법 명령은 별도 입력값 없이 실행한다", () => {
+    expect(commandDefinitions[8]?.toJSON()).toMatchObject({
+      description: "음악 봇의 명령과 플레이어 사용법을 확인합니다.",
+      name: "사용법",
+      options: []
     });
   });
 });
