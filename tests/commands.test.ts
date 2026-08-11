@@ -20,7 +20,7 @@ describe("commandDefinitions", () => {
   it("재생 명령은 필수 검색어 문자열을 받는다", () => {
     const play = commandDefinitions[0]?.toJSON();
 
-    expect(play?.options[0]).toMatchObject({
+    expect(play?.options?.[0]).toMatchObject({
       name: "검색어",
       required: true,
       type: 3
@@ -30,7 +30,7 @@ describe("commandDefinitions", () => {
   it("자동재생 명령은 켜기와 끄기 선택지만 제공한다", () => {
     const autoplay = commandDefinitions[5]?.toJSON();
 
-    expect(autoplay?.options[0]).toMatchObject({
+    expect(autoplay?.options?.[0]).toMatchObject({
       choices: [
         { name: "켜기", value: "on" },
         { name: "끄기", value: "off" }
@@ -41,4 +41,3 @@ describe("commandDefinitions", () => {
     });
   });
 });
-
