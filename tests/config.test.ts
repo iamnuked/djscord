@@ -4,7 +4,6 @@ import { loadConfig } from "../src/config.js";
 
 const requiredEnvironment = {
   DISCORD_CLIENT_ID: "client-id",
-  DISCORD_GUILD_ID: "guild-id",
   DISCORD_TOKEN: "discord-token",
   LAVALINK_PASSWORD: "a-secure-password"
 };
@@ -16,6 +15,10 @@ describe("loadConfig", () => {
       LAVALINK_HOST: "lavalink",
       LAVALINK_PORT: 2333
     });
+  });
+
+  it("전역 명령 등록에는 길드 ID가 필요하지 않다", () => {
+    expect(() => loadConfig(requiredEnvironment)).not.toThrow();
   });
 
   it("Lavalink 비밀번호가 너무 짧으면 이해하기 쉬운 오류를 낸다", () => {

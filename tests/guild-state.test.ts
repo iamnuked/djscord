@@ -7,6 +7,26 @@ describe("GuildStateStore", () => {
     const store = new GuildStateStore();
 
     expect(store.getOrCreate("guild-1").autoplayEnabled).toBe(true);
+    expect(store.getOrCreate("guild-1")).toMatchObject({
+      autoplayDefault: true,
+      defaultVolume: 100
+    });
+  });
+
+  it("서버 설정은 세션 초기화 뒤에도 유지하고 현재 자동재생만 기본값으로 되돌린다", () => {
+    const store = new GuildStateStore();
+    store.updateSettings("guild-1", { autoplayDefault: false, defaultVolume: 65 });
+    store.getOrCreate("guild-1").autoplayEnabled = true;
+    store.rememberTrack("guild-1", "track-1");
+
+    store.resetSession("guild-1");
+
+    expect(store.getOrCreate("guild-1")).toEqual({
+      autoplayDefault: false,
+      autoplayEnabled: false,
+      defaultVolume: 65,
+      recentTrackIds: []
+    });
   });
 
   it("서버별 상태를 독립적으로 유지한다", () => {

@@ -26,6 +26,7 @@ describe("createHelpReply", () => {
       "/정지",
       "/대기열",
       "/자동재생",
+      "/설정",
       "/사용법"
     ]) {
       expect(text).toContain(command);

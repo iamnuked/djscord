@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { commandDefinitions } from "../src/discord/commands.js";
 
 describe("commandDefinitions", () => {
-  it("재생 제어, 장르, 사용법을 포함한 한국어 명령 15개를 등록한다", () => {
+  it("재생 제어, 장르, 서버 설정, 사용법을 포함한 한국어 명령 16개를 등록한다", () => {
     const commands = commandDefinitions.map((command) => command.toJSON());
 
     expect(commands.map(({ name }) => name)).toEqual([
@@ -21,6 +21,7 @@ describe("commandDefinitions", () => {
       "자동재생",
       "정지",
       "장르",
+      "설정",
       "사용법"
     ]);
   });
@@ -67,11 +68,40 @@ describe("commandDefinitions", () => {
   });
 
   it("사용법 명령은 별도 입력값 없이 실행한다", () => {
-    expect(commandDefinitions[14]?.toJSON()).toMatchObject({
+    expect(commandDefinitions[15]?.toJSON()).toMatchObject({
       description: "음악 봇의 명령과 플레이어 사용법을 확인합니다.",
       name: "사용법",
       options: []
     });
+  });
+
+  it("설정 명령은 서버 관리자가 기본 볼륨과 자동재생 기본값을 선택적으로 바꾼다", () => {
+    const settings = commandDefinitions[14]?.toJSON();
+
+    expect(settings).toMatchObject({
+      default_member_permissions: "32",
+      name: "설정"
+    });
+    expect(settings?.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          max_value: 100,
+          min_value: 0,
+          name: "기본볼륨",
+          required: false,
+          type: 4
+        }),
+        expect.objectContaining({
+          choices: [
+            { name: "켜기", value: "on" },
+            { name: "끄기", value: "off" }
+          ],
+          name: "자동재생",
+          required: false,
+          type: 3
+        })
+      ])
+    );
   });
 
   it("반복·삭제·이동·탐색·볼륨 입력 범위를 정의한다", () => {
