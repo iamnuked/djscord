@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const environmentSchema = z.object({
+  DATABASE_PATH: z.string().min(1, "DATABASE_PATH는 빈 값일 수 없습니다.").default("/data/djscord.sqlite"),
   DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID가 필요합니다."),
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN이 필요합니다."),
   KOFI_URL: z

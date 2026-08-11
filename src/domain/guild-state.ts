@@ -2,8 +2,18 @@ import type { GuildPlaybackState, GuildSettings } from "./types.js";
 
 const RECENT_TRACK_LIMIT = 20;
 
+export interface GuildSettingsPersistence {
+  getGuildSettings(guildId: string): GuildSettings | undefined;
+  saveGuildSettings(guildId: string, settings: GuildSettings): void;
+}
+
 export class GuildStateStore {
+  readonly #persistence: GuildSettingsPersistence | undefined;
   readonly #states = new Map<string, GuildPlaybackState>();
+
+  constructor(persistence?: GuildSettingsPersistence) {
+    this.#persistence = persistence;
+  }
 
   getOrCreate(guildId: string): GuildPlaybackState {
     const existing = this.#states.get(guildId);
@@ -11,10 +21,12 @@ export class GuildStateStore {
       return existing;
     }
 
+    const saved = this.#persistence?.getGuildSettings(guildId);
+    const autoplayDefault = saved?.autoplayDefault ?? true;
     const created: GuildPlaybackState = {
-      autoplayDefault: true,
-      autoplayEnabled: true,
-      defaultVolume: 100,
+      autoplayDefault,
+      autoplayEnabled: autoplayDefault,
+      defaultVolume: saved?.defaultVolume ?? 100,
       recentTrackIds: []
     };
     this.#states.set(guildId, created);
@@ -33,6 +45,10 @@ export class GuildStateStore {
       state.autoplayDefault = settings.autoplayDefault;
       state.autoplayEnabled = settings.autoplayDefault;
     }
+    this.#persistence?.saveGuildSettings(guildId, {
+      autoplayDefault: state.autoplayDefault,
+      defaultVolume: state.defaultVolume
+    });
     return state;
   }
 

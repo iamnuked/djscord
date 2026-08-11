@@ -17,6 +17,8 @@ services:
       - ALL
     tmpfs:
       - /tmp
+    volumes:
+      - bot-data:/data
 
   lavalink:
     image: ghcr.io/lavalink-devs/lavalink:4.2.2-alpine@sha256:96be2be7ee50d35a9bd42c8c7b99e2a4b741f09123066c1ebb9e014dd7db204d
@@ -39,3 +41,6 @@ services:
       - /opt/Lavalink/plugins:uid=322,gid=65533,mode=0770
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
+
+volumes:
+  bot-data:

@@ -114,6 +114,57 @@ export const commandDefinitions = [
         .addChoices({ name: "켜기", value: "on" }, { name: "끄기", value: "off" })
     ),
   new SlashCommandBuilder()
+    .setName("좋아요")
+    .setDescription("현재 곡을 내 즐겨찾기에 저장합니다."),
+  new SlashCommandBuilder()
+    .setName("내음악")
+    .setDescription("내가 즐겨찾기에 저장한 곡을 확인합니다."),
+  new SlashCommandBuilder()
+    .setName("플레이리스트")
+    .setDescription("내 플레이리스트를 저장하고 재생합니다.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("저장")
+        .setDescription("현재 곡과 대기열을 저장합니다.")
+        .addStringOption((option) =>
+          option
+            .setName("이름")
+            .setDescription("저장할 플레이리스트 이름")
+            .setRequired(true)
+            .setMinLength(1)
+            .setMaxLength(40)
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("목록").setDescription("저장한 플레이리스트 목록을 확인합니다.")
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("재생")
+        .setDescription("저장한 플레이리스트를 대기열에 추가합니다.")
+        .addStringOption((option) =>
+          option
+            .setName("이름")
+            .setDescription("재생할 플레이리스트 이름")
+            .setRequired(true)
+            .setMinLength(1)
+            .setMaxLength(40)
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("삭제")
+        .setDescription("저장한 플레이리스트를 삭제합니다.")
+        .addStringOption((option) =>
+          option
+            .setName("이름")
+            .setDescription("삭제할 플레이리스트 이름")
+            .setRequired(true)
+            .setMinLength(1)
+            .setMaxLength(40)
+        )
+    ),
+  new SlashCommandBuilder()
     .setName("사용법")
     .setDescription("음악 봇의 명령과 플레이어 사용법을 확인합니다.")
 ];

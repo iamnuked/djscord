@@ -35,6 +35,7 @@ import {
   LavalinkTrackLoader
 } from "../infrastructure/lavalink-track-loader.js";
 import { LastFmGenreArtistProvider } from "../infrastructure/lastfm-genre-artist-provider.js";
+import { SqliteMusicRepository } from "../infrastructure/sqlite-music-repository.js";
 import { AutoplayService } from "../music/autoplay-service.js";
 import { GenrePlaylistService } from "../music/genre-playlist.js";
 import { GuildTaskQueue } from "../music/guild-task-queue.js";
@@ -47,6 +48,7 @@ import {
   type PlaybackRepeatMode,
   validateSeekPosition
 } from "../music/playback-controls.js";
+import { restoreSavedTracks } from "../music/saved-playlist.js";
 import { TrackResolverService } from "../music/track-resolver.js";
 import { GenreDraftStore, type GenreDraft } from "./genre-draft.js";
 import {
@@ -77,13 +79,15 @@ export interface MusicBot {
   client: Client;
   lavalink: LavalinkManager;
   start(): Promise<void>;
+  stop(): void;
 }
 
 export function createMusicBot(config: AppConfig): MusicBot {
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates]
   });
-  const states = new GuildStateStore();
+  const repository = new SqliteMusicRepository(config.DATABASE_PATH);
+  const states = new GuildStateStore(repository);
   const idleTimers = new IdleTimerManager(IDLE_TIMEOUT_MS);
   const pausedForEmptyChannel = new Set<string>();
   const autoplayFailures = new Set<string>();
@@ -360,6 +364,15 @@ export function createMusicBot(config: AppConfig): MusicBot {
         break;
       case "설정":
         await handleSettings(interaction);
+        break;
+      case "좋아요":
+        await handleFavorite(interaction);
+        break;
+      case "내음악":
+        await handleMyMusic(interaction);
+        break;
+      case "플레이리스트":
+        await handlePlaylist(interaction);
         break;
       case "사용법":
         await interaction.reply(createHelpReply());
@@ -1029,6 +1042,204 @@ export function createMusicBot(config: AppConfig): MusicBot {
     });
   }
 
+  async function handleFavorite(interaction: ChatInputCommandInteraction): Promise<void> {
+    const player = lavalink.getPlayer(interaction.guildId!);
+    if (player?.queue.current === null || player?.queue.current === undefined) {
+      await interaction.reply({
+        content: "현재 재생 중인 곡이 없습니다.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+    const track = fromLavalinkTrack(player.queue.current);
+    const added = repository.addFavorite(interaction.user.id, track);
+    await interaction.reply({
+      content: added
+        ? `즐겨찾기에 **${track.title}**을(를) 저장했습니다.`
+        : `**${track.title}**은(는) 이미 즐겨찾기에 있습니다.`,
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  async function handleMyMusic(interaction: ChatInputCommandInteraction): Promise<void> {
+    const tracks = repository.listFavorites(interaction.user.id, 20);
+    if (tracks.length === 0) {
+      await interaction.reply({
+        content: "저장한 즐겨찾기 곡이 없습니다. 재생 중에 `/좋아요`를 사용해보세요.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+    const content = tracks
+      .map(
+        (track, index) =>
+          `${index + 1}. [${escapeLinkText(track.title)}](${track.uri}) · ${track.author}`
+      )
+      .join("\n");
+    await interaction.reply({
+      content: `**내 즐겨찾기 · 최근 ${tracks.length}곡**\n${content}`,
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  async function handlePlaylist(interaction: ChatInputCommandInteraction): Promise<void> {
+    switch (interaction.options.getSubcommand(true)) {
+      case "저장":
+        await saveCurrentPlaylist(interaction);
+        return;
+      case "목록":
+        await listSavedPlaylists(interaction);
+        return;
+      case "재생":
+        await playSavedPlaylist(interaction);
+        return;
+      case "삭제":
+        await deleteSavedPlaylist(interaction);
+        return;
+      default:
+        throw new Error("지원하지 않는 플레이리스트 작업입니다.");
+    }
+  }
+
+  async function saveCurrentPlaylist(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
+    const player = lavalink.getPlayer(interaction.guildId!);
+    if (player === undefined) {
+      await interaction.reply({
+        content: "저장할 현재 곡이나 대기열이 없습니다.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+    const tracks = [
+      ...(player.queue.current === null ? [] : [fromLavalinkTrack(player.queue.current)]),
+      ...player.queue.tracks.flatMap((track) =>
+        "resolve" in track ? [] : [fromLavalinkTrack(track)]
+      )
+    ].slice(0, MANUAL_QUEUE_LIMIT);
+    if (tracks.length === 0) {
+      await interaction.reply({
+        content: "저장할 현재 곡이나 대기열이 없습니다.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+    const name = interaction.options.getString("이름", true);
+    const status = repository.savePlaylist(
+      interaction.guildId!,
+      interaction.user.id,
+      name,
+      tracks
+    );
+    await interaction.reply({
+      content: `플레이리스트 ${formatInlineCode(name)}에 ${tracks.length}곡을 ${status === "created" ? "저장했습니다" : "새 목록으로 교체했습니다"}.`,
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  async function listSavedPlaylists(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
+    const playlists = repository.listPlaylists(interaction.guildId!, interaction.user.id);
+    const content =
+      playlists.length === 0
+        ? "저장한 플레이리스트가 없습니다."
+        : playlists
+            .map(
+              ({ name, trackCount }, index) =>
+                `${index + 1}. ${formatInlineCode(name)} · ${trackCount}곡`
+            )
+            .join("\n");
+    await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  }
+
+  async function deleteSavedPlaylist(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
+    const name = interaction.options.getString("이름", true);
+    const deleted = repository.deletePlaylist(
+      interaction.guildId!,
+      interaction.user.id,
+      name
+    );
+    await interaction.reply({
+      content: deleted
+        ? `플레이리스트 ${formatInlineCode(name)}을(를) 삭제했습니다.`
+        : `플레이리스트 ${formatInlineCode(name)}을(를) 찾지 못했습니다.`,
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  async function playSavedPlaylist(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
+    const voice = await getVoiceContext(interaction);
+    if (!voice.ok) {
+      await interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
+      return;
+    }
+    const name = interaction.options.getString("이름", true);
+    const saved = repository.getPlaylist(interaction.guildId!, interaction.user.id, name);
+    if (saved === undefined) {
+      await interaction.reply({
+        content: `플레이리스트 ${formatInlineCode(name)}을(를) 찾지 못했습니다.`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const guildId = interaction.guildId!;
+    const searchContext = getSearchContext(guildId);
+    const restored = await restoreSavedTracks(
+      searchContext.loader,
+      saved.tracks,
+      interaction.user.id
+    );
+    const result = await guildTasks.run(guildId, async () => {
+      const latestVoice = await getVoiceContext(interaction);
+      if (!latestVoice.ok) throw new Error(latestVoice.message);
+      const currentPlayer = lavalink.getPlayer(guildId);
+      const slots = Math.max(
+        0,
+        MANUAL_QUEUE_LIMIT - (currentPlayer === undefined ? 0 : manualQueueLength(currentPlayer))
+      );
+      const accepted = restored.tracks.slice(0, slots);
+      if (accepted.length === 0) return { added: 0, limited: restored.tracks.length };
+      const player =
+        currentPlayer ??
+        lavalink.createPlayer({
+          guildId,
+          node: searchContext.node,
+          selfDeaf: true,
+          selfMute: false,
+          textChannelId: interaction.channelId,
+          voiceChannelId: latestVoice.voiceChannelId,
+          volume: states.getOrCreate(guildId).defaultVolume
+        });
+      idleTimers.cancel(guildId);
+      if (!player.connected) await player.connect();
+      await player.queue.add(
+        accepted.map((track) => searchContext.loader.toLavalinkTrack(track))
+      );
+      if (!player.playing && !player.paused && player.queue.current === null) {
+        await player.play();
+      }
+      await refreshPlayerMessage(player, interaction.channelId);
+      return { added: accepted.length, limited: restored.tracks.length - accepted.length };
+    });
+
+    if (result.added === 0) {
+      await interaction.editReply("대기열이 가득 찼거나 저장된 곡을 다시 찾지 못했습니다.");
+      return;
+    }
+    const excluded = restored.unavailableCount + result.limited;
+    await interaction.editReply(
+      `플레이리스트 ${formatInlineCode(saved.name)}에서 ${result.added}곡을 추가했습니다.${excluded > 0 ? ` 찾을 수 없거나 용량을 초과한 ${excluded}곡은 제외했습니다.` : ""}`
+    );
+  }
+
   async function handlePlayerButton(interaction: ButtonInteraction): Promise<void> {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (interaction.guildId === null) {
@@ -1293,6 +1504,10 @@ export function createMusicBot(config: AppConfig): MusicBot {
     lavalink,
     async start() {
       await client.login(config.DISCORD_TOKEN);
+    },
+    stop() {
+      client.destroy();
+      repository.close();
     }
   };
 }
@@ -1381,6 +1596,10 @@ function genreDraftKey(guildId: string, userId: string): string {
 
 function escapeLinkText(value: string): string {
   return value.replaceAll("[", "(").replaceAll("]", ")");
+}
+
+function formatInlineCode(value: string): string {
+  return `\`${value.trim().replaceAll("`", "'")}\``;
 }
 
 async function respondWithError(
