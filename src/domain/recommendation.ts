@@ -3,6 +3,8 @@ import type { MusicTrack } from "./types.js";
 interface RecommendationSelection {
   candidates: readonly MusicTrack[];
   currentIdentifier: string;
+  excludedAuthors?: ReadonlySet<string>;
+  excludedIdentifiers?: ReadonlySet<string>;
   queuedIdentifiers: ReadonlySet<string>;
   recentIdentifiers: ReadonlySet<string>;
 }
@@ -10,6 +12,8 @@ interface RecommendationSelection {
 export function selectRecommendation({
   candidates,
   currentIdentifier,
+  excludedAuthors = new Set(),
+  excludedIdentifiers = new Set(),
   queuedIdentifiers,
   recentIdentifiers
 }: RecommendationSelection): MusicTrack | undefined {
@@ -17,6 +21,8 @@ export function selectRecommendation({
     (candidate) =>
       !candidate.isStream &&
       candidate.identifier !== currentIdentifier &&
+      !excludedIdentifiers.has(candidate.identifier) &&
+      !excludedAuthors.has(normalizeRecommendationAuthor(candidate.author)) &&
       !queuedIdentifiers.has(candidate.identifier) &&
       !recentIdentifiers.has(candidate.identifier)
   );
@@ -31,4 +37,8 @@ export function selectRecommendation({
     ...trackWithoutRequester,
     origin: "recommended"
   };
+}
+
+export function normalizeRecommendationAuthor(author: string): string {
+  return author.trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
 }

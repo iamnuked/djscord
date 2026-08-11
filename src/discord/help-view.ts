@@ -63,7 +63,8 @@ export function createHelpReply(): InteractionReplyOptions {
         name: "🖱️ 채팅 플레이어 버튼",
         value: [
           "`▶️/⏸️` 재생·일시정지　`⏭️` 스킵　`⏹️` 정지",
-          "`🔄` 화면 새로고침　`✨` 자동재생　`📋` 대기열"
+          "`🔄` 화면 새로고침　`✨` 자동재생　`📋` 대기열",
+          "`👍` 서버 추천 선호　`👎` 추천 제외 후 스킵"
         ].join("\n")
       },
       {

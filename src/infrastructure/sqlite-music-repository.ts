@@ -2,7 +2,12 @@ import { DatabaseSync } from "node:sqlite";
 
 import { z } from "zod";
 
-import type { GuildSettings, MusicTrack } from "../domain/types.js";
+import { normalizeRecommendationAuthor } from "../domain/recommendation.js";
+import type {
+  GuildSettings,
+  MusicTrack,
+  RecommendationFeedback
+} from "../domain/types.js";
 
 const MAX_PLAYLIST_TRACKS = 100;
 const MAX_PLAYLIST_NAME_LENGTH = 40;
@@ -30,6 +35,24 @@ export interface SavedPlaylist {
 export interface SavedPlaylistSummary {
   name: string;
   trackCount: number;
+}
+
+export interface RecommendationProfile {
+  blockedAuthors: Set<string>;
+  dislikedTrackIds: Set<string>;
+  preferredTrack?: MusicTrack;
+}
+
+interface AuthorKeyRow {
+  author_key: string;
+}
+
+interface FeedbackRow {
+  feedback: RecommendationFeedback;
+}
+
+interface IdentifierRow {
+  track_identifier: string;
 }
 
 interface GuildSettingsRow {
@@ -83,6 +106,15 @@ export class SqliteMusicRepository {
         position INTEGER NOT NULL,
         track_json TEXT NOT NULL,
         PRIMARY KEY (playlist_id, position)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS recommendation_feedback (
+        guild_id TEXT NOT NULL,
+        track_identifier TEXT NOT NULL,
+        author_key TEXT NOT NULL,
+        feedback TEXT NOT NULL CHECK (feedback IN ('like', 'dislike')),
+        track_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, track_identifier)
       ) STRICT;
     `);
   }
@@ -228,6 +260,89 @@ export class SqliteMusicRepository {
       .prepare("DELETE FROM playlists WHERE guild_id = ? AND user_id = ? AND name = ?")
       .run(guildId, userId, normalizedName);
     return result.changes === 1;
+  }
+
+  setRecommendationFeedback(
+    guildId: string,
+    track: MusicTrack,
+    feedback: RecommendationFeedback
+  ): void {
+    this.#database
+      .prepare(`
+        INSERT INTO recommendation_feedback (
+          guild_id,
+          track_identifier,
+          author_key,
+          feedback,
+          track_json,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (guild_id, track_identifier) DO UPDATE SET
+          author_key = excluded.author_key,
+          feedback = excluded.feedback,
+          track_json = excluded.track_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        guildId,
+        track.identifier,
+        normalizeRecommendationAuthor(track.author),
+        feedback,
+        serializeTrack(track),
+        Date.now()
+      );
+  }
+
+  getRecommendationFeedback(
+    guildId: string,
+    trackIdentifier: string
+  ): RecommendationFeedback | undefined {
+    const row = this.#database
+      .prepare(`
+        SELECT feedback
+        FROM recommendation_feedback
+        WHERE guild_id = ? AND track_identifier = ?
+      `)
+      .get(guildId, trackIdentifier) as FeedbackRow | undefined;
+    return row?.feedback;
+  }
+
+  getRecommendationProfile(guildId: string): RecommendationProfile {
+    const dislikedRows = this.#database
+      .prepare(`
+        SELECT track_identifier
+        FROM recommendation_feedback
+        WHERE guild_id = ? AND feedback = 'dislike'
+      `)
+      .all(guildId) as unknown as IdentifierRow[];
+    const blockedAuthorRows = this.#database
+      .prepare(`
+        SELECT author_key
+        FROM recommendation_feedback
+        WHERE guild_id = ? AND feedback = 'dislike'
+        GROUP BY author_key
+        HAVING COUNT(*) >= 2
+      `)
+      .all(guildId) as unknown as AuthorKeyRow[];
+    const preferredRow = this.#database
+      .prepare(`
+        SELECT track_json
+        FROM recommendation_feedback
+        WHERE guild_id = ? AND feedback = 'like'
+        ORDER BY updated_at DESC, track_identifier ASC
+        LIMIT 1
+      `)
+      .get(guildId) as TrackJsonRow | undefined;
+
+    return {
+      blockedAuthors: new Set(blockedAuthorRows.map(({ author_key }) => author_key)),
+      dislikedTrackIds: new Set(
+        dislikedRows.map(({ track_identifier }) => track_identifier)
+      ),
+      ...(preferredRow === undefined
+        ? {}
+        : { preferredTrack: deserializeTrack(preferredRow.track_json) })
+    };
   }
 
   close(): void {

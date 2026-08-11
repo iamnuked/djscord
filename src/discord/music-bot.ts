@@ -167,9 +167,15 @@ export function createMusicBot(config: AppConfig): MusicBot {
     try {
       const loader = new LavalinkTrackLoader(player);
       const service = new AutoplayService(loader);
+      const feedbackProfile = repository.getRecommendationProfile(player.guildId);
       const recommended = await service.recommend({
         enabled: state.autoplayEnabled,
+        excludedAuthors: feedbackProfile.blockedAuthors,
+        excludedTrackIds: feedbackProfile.dislikedTrackIds,
         lastTrack: fromLavalinkTrack(lastPlayedTrack),
+        ...(feedbackProfile.preferredTrack === undefined
+          ? {}
+          : { preferredSeed: feedbackProfile.preferredTrack }),
         queuedTrackIds: new Set(
           player.queue.tracks.flatMap((track) =>
             "resolve" in track ? [] : [track.info.identifier]
@@ -1321,6 +1327,22 @@ export function createMusicBot(config: AppConfig): MusicBot {
           await refreshPlayerMessage(player);
           break;
         }
+        case "like":
+        case "dislike": {
+          if (player.queue.current === null) {
+            throw new Error("현재 재생 중인 곡이 없습니다.");
+          }
+          repository.setRecommendationFeedback(
+            player.guildId,
+            fromLavalinkTrack(player.queue.current),
+            parsed.action
+          );
+          if (parsed.action === "dislike") {
+            await player.skip(0, false);
+          }
+          await refreshPlayerMessage(player);
+          break;
+        }
         default:
           throw new Error("지원하지 않는 플레이어 버튼입니다.");
       }
@@ -1328,6 +1350,8 @@ export function createMusicBot(config: AppConfig): MusicBot {
 
     const messages: Record<string, string> = {
       autoplay: "자동재생 상태를 변경했습니다.",
+      dislike: "이 곡을 이후 추천에서 제외하고 다음 곡으로 넘어갑니다.",
+      like: "이 곡을 서버의 추천 선호 시드로 저장했습니다.",
       skip: "현재 곡을 건너뛰었습니다.",
       stop: "재생을 종료하고 음성 채널에서 나왔습니다.",
       toggle: "재생 상태를 변경했습니다."
@@ -1408,6 +1432,10 @@ export function createMusicBot(config: AppConfig): MusicBot {
     return {
       autoplayEnabled: states.getOrCreate(guildId).autoplayEnabled,
       current,
+      feedback:
+        current === null
+          ? null
+          : (repository.getRecommendationFeedback(guildId, current.identifier) ?? null),
       next,
       positionMs: player.position,
       queueSize: player.queue.tracks.length,

@@ -1,4 +1,5 @@
 export type TrackOrigin = "requested" | "genre" | "recommended";
+export type RecommendationFeedback = "dislike" | "like";
 
 export interface MusicTrack {
   artworkUrl?: string | null;

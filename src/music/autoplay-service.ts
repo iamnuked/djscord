@@ -4,7 +4,10 @@ import type { TrackLoader } from "./ports.js";
 
 interface RecommendationRequest {
   enabled: boolean;
+  excludedAuthors?: ReadonlySet<string>;
+  excludedTrackIds?: ReadonlySet<string>;
   lastTrack: MusicTrack;
+  preferredSeed?: MusicTrack;
   queuedTrackIds: ReadonlySet<string>;
   recentTrackIds: ReadonlySet<string>;
 }
@@ -18,7 +21,10 @@ export class AutoplayService {
 
   async recommend({
     enabled,
+    excludedAuthors,
+    excludedTrackIds,
     lastTrack,
+    preferredSeed,
     queuedTrackIds,
     recentTrackIds
   }: RecommendationRequest): Promise<MusicTrack | undefined> {
@@ -26,16 +32,18 @@ export class AutoplayService {
       return undefined;
     }
 
-    const identifier = encodeURIComponent(lastTrack.identifier);
+    const seed = preferredSeed ?? lastTrack;
+    const identifier = encodeURIComponent(seed.identifier);
     const mixUrl = `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`;
     const result = await this.#loader.load(mixUrl, "autoplay", undefined);
 
     return selectRecommendation({
       candidates: result.tracks,
-      currentIdentifier: lastTrack.identifier,
+      currentIdentifier: seed.identifier,
+      ...(excludedAuthors === undefined ? {} : { excludedAuthors }),
+      ...(excludedTrackIds === undefined ? {} : { excludedIdentifiers: excludedTrackIds }),
       queuedIdentifiers: queuedTrackIds,
       recentIdentifiers: recentTrackIds
     });
   }
 }
-

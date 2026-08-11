@@ -5,7 +5,7 @@ import {
   EmbedBuilder
 } from "discord.js";
 
-import type { MusicTrack } from "../domain/types.js";
+import type { MusicTrack, RecommendationFeedback } from "../domain/types.js";
 import { formatRepeatMode, type PlaybackRepeatMode } from "../music/playback-controls.js";
 
 const PROGRESS_SEGMENTS = 12;
@@ -13,6 +13,7 @@ const PROGRESS_SEGMENTS = 12;
 export interface PlayerCardSnapshot {
   autoplayEnabled: boolean;
   current: MusicTrack | null;
+  feedback: RecommendationFeedback | null;
   next: MusicTrack | null;
   positionMs: number;
   queueSize: number;
@@ -75,7 +76,17 @@ export function buildPlayerCard(
       .setEmoji("📋")
       .setLabel("대기열")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(ended)
+      .setDisabled(ended),
+    new ButtonBuilder()
+      .setCustomId(`music:${sessionId}:like`)
+      .setEmoji("👍")
+      .setStyle(snapshot.feedback === "like" ? ButtonStyle.Success : ButtonStyle.Secondary)
+      .setDisabled(playbackDisabled),
+    new ButtonBuilder()
+      .setCustomId(`music:${sessionId}:dislike`)
+      .setEmoji("👎")
+      .setStyle(snapshot.feedback === "dislike" ? ButtonStyle.Danger : ButtonStyle.Secondary)
+      .setDisabled(playbackDisabled)
   );
   if (options.supportUrl !== undefined) {
     secondRow.addComponents(

@@ -86,6 +86,7 @@ export class PlayerMessageController {
       const ended: PlayerCardSnapshot = {
         ...state.lastSnapshot,
         current: null,
+        feedback: null,
         next: null,
         positionMs: 0,
         queueSize: 0,
