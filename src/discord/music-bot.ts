@@ -135,7 +135,8 @@ export function createMusicBot(config: AppConfig): MusicBot {
         }
       };
     },
-    snapshotProvider: (guildId) => createPlayerSnapshot(guildId)
+    snapshotProvider: (guildId) => createPlayerSnapshot(guildId),
+    ...(config.KOFI_URL === undefined ? {} : { supportUrl: config.KOFI_URL })
   });
 
   async function enqueueRecommendation(player: Player, lastPlayedTrack: Track): Promise<void> {
@@ -1035,7 +1036,8 @@ export function createMusicBot(config: AppConfig): MusicBot {
       positionMs: player.position,
       queueSize: player.queue.tracks.length,
       status: current === null ? "idle" : player.paused ? "paused" : "playing",
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      voiceChannelId: player.voiceChannelId
     };
   }
 

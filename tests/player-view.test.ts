@@ -67,7 +67,9 @@ describe("buildPlayerCard", () => {
     const secondRow = rows[1]?.components ?? [];
 
     expect(firstRow).toHaveLength(5);
-    expect(firstRow.map(({ emoji }) => emoji?.name)).toEqual(["⏸️", "⏭️", "⏹️", "🔄", "✨"]);
+    expect(
+      firstRow.map((component) => ("emoji" in component ? component.emoji?.name : undefined))
+    ).toEqual(["⏸️", "⏭️", "⏹️", "🔄", "✨"]);
     expect(secondRow).toHaveLength(2);
     expect(secondRow[0]).toMatchObject({ label: "대기열" });
     expect(secondRow[1]).toMatchObject({

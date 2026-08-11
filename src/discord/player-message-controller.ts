@@ -1,5 +1,6 @@
 import {
   buildPlayerCard,
+  type PlayerCardOptions,
   type PlayerCardPayload,
   type PlayerCardSnapshot
 } from "./player-view.js";
@@ -15,6 +16,7 @@ interface PlayerMessageControllerOptions {
   idFactory: () => string;
   send: (channelId: string, payload: PlayerMessagePayload) => Promise<EditablePlayerMessage>;
   snapshotProvider: (guildId: string) => PlayerCardSnapshot | undefined;
+  supportUrl?: string;
 }
 
 interface PlayerMessageState {
@@ -27,6 +29,7 @@ interface PlayerMessageState {
 export class PlayerMessageController {
   readonly #cooldowns = new Map<string, number>();
   readonly #idFactory: () => string;
+  readonly #playerCardOptions: PlayerCardOptions;
   readonly #send: PlayerMessageControllerOptions["send"];
   readonly #snapshotProvider: PlayerMessageControllerOptions["snapshotProvider"];
   readonly #states = new Map<string, PlayerMessageState>();
@@ -34,6 +37,8 @@ export class PlayerMessageController {
 
   constructor(options: PlayerMessageControllerOptions) {
     this.#idFactory = options.idFactory;
+    this.#playerCardOptions =
+      options.supportUrl === undefined ? {} : { supportUrl: options.supportUrl };
     this.#send = options.send;
     this.#snapshotProvider = options.snapshotProvider;
   }
@@ -48,7 +53,10 @@ export class PlayerMessageController {
       const existing = this.#states.get(guildId);
       if (existing === undefined) {
         const sessionId = this.#idFactory();
-        const message = await this.#send(channelId, buildPlayerCard(snapshot, sessionId));
+        const message = await this.#send(
+          channelId,
+          buildPlayerCard(snapshot, sessionId, this.#playerCardOptions)
+        );
         this.#states.set(guildId, {
           channelId,
           lastSnapshot: snapshot,
@@ -58,7 +66,7 @@ export class PlayerMessageController {
         return;
       }
 
-      const payload = buildPlayerCard(snapshot, existing.sessionId);
+      const payload = buildPlayerCard(snapshot, existing.sessionId, this.#playerCardOptions);
       try {
         await existing.message.edit(payload);
         existing.lastSnapshot = snapshot;
@@ -84,7 +92,7 @@ export class PlayerMessageController {
         status: "ended",
         updatedAt: new Date()
       };
-      const payload = buildPlayerCard(ended, state.sessionId);
+      const payload = buildPlayerCard(ended, state.sessionId, this.#playerCardOptions);
       try {
         await state.message.edit(payload);
       } catch {

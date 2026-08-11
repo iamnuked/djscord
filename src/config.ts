@@ -4,6 +4,10 @@ const environmentSchema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID가 필요합니다."),
   DISCORD_GUILD_ID: z.string().min(1, "DISCORD_GUILD_ID가 필요합니다."),
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN이 필요합니다."),
+  KOFI_URL: z
+    .string()
+    .refine(isKofiUrl, "KOFI_URL은 https://ko-fi.com/ 주소여야 합니다.")
+    .optional(),
   LAVALINK_HOST: z.string().min(1).default("lavalink"),
   LAVALINK_PASSWORD: z.string().min(12, "LAVALINK_PASSWORD는 12자 이상이어야 합니다."),
   LAVALINK_PORT: z.coerce.number().int().positive().max(65_535).default(2333)
@@ -20,3 +24,14 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
   return result.data;
 }
 
+function isKofiUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      (url.hostname === "ko-fi.com" || url.hostname === "www.ko-fi.com")
+    );
+  } catch {
+    return false;
+  }
+}

@@ -9,7 +9,8 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
 - `/일시정지`, `/계속`, `/스킵`, `/정지`
 - `/대기열`: 현재 곡과 다음 10곡 표시
 - `/자동재생`: 마지막 곡 기반 YouTube Mix 추천 켜기·끄기
-- 채팅 플레이어: 현재 곡, 진행 상태, 다음 곡, 자동재생 상태와 6개 제어 버튼을 한 메시지에서 갱신
+- 채팅 플레이어: 앨범형 카드와 아이콘 제어 버튼을 한 메시지에서 갱신
+- 선택적 Ko-fi 후원 버튼: 설정한 공식 Ko-fi 페이지를 플레이어에서 바로 열기
 - 서버별 최대 100곡의 독립 대기열
 - 청취자 또는 재생 요청이 5분 동안 없을 때 자동 퇴장
 
@@ -39,12 +40,15 @@ cp .env.example .env
 DISCORD_TOKEN=Discord에서_발급한_봇_토큰
 DISCORD_CLIENT_ID=애플리케이션_ID
 DISCORD_GUILD_ID=테스트_서버_ID
+KOFI_URL=https://ko-fi.com/내_Ko-fi_아이디
 LAVALINK_HOST=lavalink
 LAVALINK_PORT=2333
 LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
 ```
 
 `LAVALINK_PASSWORD`는 Node.js 봇과 Lavalink가 서로를 인증할 때 사용합니다. 외부 서비스의 비밀번호가 아니라 이 프로젝트 안에서 직접 정하는 값입니다.
+
+`KOFI_URL`은 선택값입니다. `https://ko-fi.com/아이디` 형태의 본인 후원 페이지를 넣으면 플레이어 카드에 `☕ Ko-fi` 링크 버튼이 나타납니다. 설정하지 않으면 후원 버튼만 숨겨지고 음악 기능은 그대로 동작합니다.
 
 ## 실행하기
 

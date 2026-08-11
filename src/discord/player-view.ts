@@ -17,6 +17,11 @@ export interface PlayerCardSnapshot {
   queueSize: number;
   status: "playing" | "paused" | "idle" | "ended";
   updatedAt: Date;
+  voiceChannelId: string | null;
+}
+
+export interface PlayerCardOptions {
+  supportUrl?: string;
 }
 
 export interface PlayerCardPayload {
@@ -26,48 +31,59 @@ export interface PlayerCardPayload {
 
 export function buildPlayerCard(
   snapshot: PlayerCardSnapshot,
-  sessionId: string
+  sessionId: string,
+  options: PlayerCardOptions = {}
 ): PlayerCardPayload {
   const ended = snapshot.status === "ended";
   const embed = ended ? buildEndedEmbed(snapshot) : buildActiveEmbed(snapshot);
-  const pauseLabel = snapshot.status === "paused" ? "계속" : "일시정지";
   const pauseStyle = snapshot.status === "paused" ? ButtonStyle.Success : ButtonStyle.Primary;
   const playbackDisabled = ended || snapshot.current === null || snapshot.status === "idle";
 
   const firstRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:toggle`)
-      .setLabel(pauseLabel)
+      .setEmoji(snapshot.status === "paused" ? "▶️" : "⏸️")
       .setStyle(pauseStyle)
       .setDisabled(playbackDisabled),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:skip`)
-      .setLabel("스킵")
+      .setEmoji("⏭️")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(playbackDisabled),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:stop`)
-      .setLabel("정지")
+      .setEmoji("⏹️")
       .setStyle(ButtonStyle.Danger)
       .setDisabled(ended),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:refresh`)
-      .setLabel("새로고침")
+      .setEmoji("🔄")
       .setStyle(ButtonStyle.Secondary)
+      .setDisabled(ended),
+    new ButtonBuilder()
+      .setCustomId(`music:${sessionId}:autoplay`)
+      .setEmoji("✨")
+      .setStyle(snapshot.autoplayEnabled ? ButtonStyle.Primary : ButtonStyle.Secondary)
       .setDisabled(ended)
   );
   const secondRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:queue`)
+      .setEmoji("📋")
       .setLabel("대기열")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(ended),
-    new ButtonBuilder()
-      .setCustomId(`music:${sessionId}:autoplay`)
-      .setLabel("자동재생")
-      .setStyle(snapshot.autoplayEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
       .setDisabled(ended)
   );
+  if (options.supportUrl !== undefined) {
+    secondRow.addComponents(
+      new ButtonBuilder()
+        .setURL(options.supportUrl)
+        .setEmoji("☕")
+        .setLabel("Ko-fi")
+        .setStyle(ButtonStyle.Link)
+        .setDisabled(ended)
+    );
+  }
 
   return { components: [firstRow, secondRow], embeds: [embed] };
 }
@@ -89,34 +105,38 @@ function buildActiveEmbed(snapshot: PlayerCardSnapshot): EmbedBuilder {
       .setTitle("대기열 종료")
       .setDescription("재생할 다음 곡을 기다리고 있습니다.")
       .addFields(
-        { name: "남은 대기열", value: `${snapshot.queueSize}곡`, inline: true },
-        { name: "자동재생", value: snapshot.autoplayEnabled ? "켜짐" : "꺼짐", inline: true }
+        { name: "대기열", value: `${snapshot.queueSize}곡`, inline: true },
+        { name: "자동재생", value: snapshot.autoplayEnabled ? "ON" : "OFF", inline: true },
+        { name: "음성채널", value: formatVoiceChannel(snapshot.voiceChannelId), inline: true }
       )
       .setFooter({ text: `마지막 갱신 · ${formatUpdatedAt(snapshot.updatedAt)}` })
       .setTimestamp(snapshot.updatedAt);
   }
 
   const embed = new EmbedBuilder()
-    .setColor(snapshot.status === "paused" ? 0xf59e0b : 0x5865f2)
+    .setColor(snapshot.status === "paused" ? 0xf59e0b : 0x2f80ed)
     .setTitle(current.title)
     .setURL(current.uri)
-    .setAuthor({ name: current.author })
+    .setAuthor({ name: `💿 ${current.author}` })
     .setDescription(formatProgress(current, snapshot.positionMs, snapshot.status))
     .addFields(
       {
-        name: "출처",
-        value: `${formatOrigin(current)}${formatRequester(current)}`,
+        name: "길이",
+        value: current.isStream ? "LIVE" : formatDuration(current.durationMs),
         inline: true
       },
       {
-        name: "다음 곡",
-        value: snapshot.next === null ? "없음" : snapshot.next.title,
+        name: "요청자",
+        value: formatRequester(current),
         inline: true
       },
-      { name: "남은 대기열", value: `${snapshot.queueSize}곡`, inline: true },
-      { name: "자동재생", value: snapshot.autoplayEnabled ? "켜짐" : "꺼짐", inline: true }
+      {
+        name: "음성채널",
+        value: formatVoiceChannel(snapshot.voiceChannelId),
+        inline: true
+      }
     )
-    .setFooter({ text: `마지막 갱신 · ${formatUpdatedAt(snapshot.updatedAt)}` })
+    .setFooter({ text: formatPlayerFooter(snapshot) })
     .setTimestamp(snapshot.updatedAt);
 
   if (current.artworkUrl !== undefined && current.artworkUrl !== null) {
@@ -138,15 +158,24 @@ function formatProgress(
   const ratio = duration === 0 ? 0 : position / duration;
   const filled = Math.min(PROGRESS_SEGMENTS, Math.floor(ratio * PROGRESS_SEGMENTS));
   const bar = "▰".repeat(filled) + "▱".repeat(PROGRESS_SEGMENTS - filled);
-  return `${status === "paused" ? "⏸️" : "▶️"} ${bar}\n${formatDuration(position)} / ${formatDuration(duration)}`;
-}
-
-function formatOrigin(track: MusicTrack): string {
-  return track.origin === "recommended" ? "자동 추천" : track.origin === "genre" ? "장르" : "요청";
+  return `${status === "paused" ? "⏸️" : "▶️"} \`${bar}\`  ${formatDuration(position)} / ${formatDuration(duration)}`;
 }
 
 function formatRequester(track: MusicTrack): string {
-  return track.requesterId === undefined ? "" : ` · <@${track.requesterId}>`;
+  if (track.origin === "recommended") {
+    return "✨ 자동 추천";
+  }
+  const requester = track.requesterId === undefined ? "알 수 없음" : `<@${track.requesterId}>`;
+  return track.origin === "genre" ? `${requester} · 장르` : requester;
+}
+
+function formatVoiceChannel(voiceChannelId: string | null): string {
+  return voiceChannelId === null ? "연결 안 됨" : `<#${voiceChannelId}>`;
+}
+
+function formatPlayerFooter(snapshot: PlayerCardSnapshot): string {
+  const next = snapshot.next === null ? "없음" : truncate(snapshot.next.title, 48);
+  return `다음 · ${next}  •  대기열 ${snapshot.queueSize}곡  •  자동재생 ${snapshot.autoplayEnabled ? "ON" : "OFF"}  •  ${formatUpdatedAt(snapshot.updatedAt)}`;
 }
 
 function formatDuration(durationMs: number): string {
@@ -160,5 +189,9 @@ function formatDuration(durationMs: number): string {
 }
 
 function formatUpdatedAt(date: Date): string {
-  return date.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  return date.toISOString().slice(11, 19) + " UTC";
+}
+
+function truncate(value: string, maximumLength: number): string {
+  return value.length <= maximumLength ? value : `${value.slice(0, maximumLength - 1)}…`;
 }
