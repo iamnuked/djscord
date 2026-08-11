@@ -1,6 +1,6 @@
 # Discord 음악 봇 MVP
 
-Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube 오디오 검색과 Discord 음성 전송을 담당하는 로컬 MVP입니다.
+Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube 오디오 검색과 Discord 음성 전송을 담당하는 음악 봇입니다. 슬래시 명령은 전역으로 등록되어 앱을 설치한 모든 서버에서 사용할 수 있습니다.
 
 ## 제공 기능
 
@@ -10,15 +10,20 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
   - Last.fm API 키가 있으면 등록되지 않은 장르의 상위 아티스트 6명을 여러 Mix 시드로 사용
   - Last.fm 장애나 API 키 미설정 시 기존 YouTube Music 검색과 일반 YouTube 검색 폴백을 그대로 사용
 - `/일시정지`, `/계속`, `/스킵`, `/정지`
+- `/반복`, `/셔플`, `/삭제`, `/이동`, `/탐색`, `/볼륨`: 반복 모드와 대기열 순서, 재생 위치, 음량 제어
 - `/대기열`: 현재 곡과 다음 10곡 표시
 - `/자동재생`: 마지막 곡 기반 YouTube Mix 추천 켜기·끄기
+- `/설정`: 서버 관리자가 새 재생 세션의 기본 볼륨과 자동재생 기본값 관리
+- `/좋아요`, `/내음악`: 현재 곡을 개인 즐겨찾기에 영구 저장하고 조회
+- `/플레이리스트 저장|목록|재생|삭제`: 현재 곡과 대기열을 개인 목록으로 영구 저장
 - `/사용법`: 빠른 시작, 전체 명령과 플레이어 버튼을 요청자에게만 보이는 안내 카드로 표시
-- 채팅 플레이어: 앨범형 카드와 아이콘 제어 버튼을 한 메시지에서 갱신
+- 채팅 플레이어: 앨범형 카드와 아이콘 제어 버튼을 한 메시지에서 갱신하며 반복·볼륨 상태 표시
+- 추천 피드백: `👍` 곡을 서버 추천 시드로 저장하고 `👎` 곡·반복해서 싫어요를 받은 아티스트 제외
 - 선택적 Ko-fi 후원 버튼: 설정한 공식 Ko-fi 페이지를 플레이어에서 바로 열기
 - 서버별 최대 100곡의 독립 대기열
 - 청취자 또는 재생 요청이 5분 동안 없을 때 자동 퇴장
 
-자동재생은 새 Player에서 기본적으로 켜집니다. 모든 상태는 메모리에만 있으므로 컨테이너를 재시작하면 대기열과 설정이 초기화됩니다.
+자동재생과 기본 볼륨은 서버별로 설정할 수 있습니다. 현재 대기열과 재생 세션은 메모리에만 있어 재시작하면 초기화되지만, 서버 설정·즐겨찾기·저장 플레이리스트·추천 피드백은 SQLite에 유지됩니다.
 
 ## 처음 한 번 준비하기
 
@@ -30,7 +35,7 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
 4. 설치 범위에 `bot`과 `applications.commands`를, 봇 권한에 `View Channels`, `Send Messages`, `Embed Links`, `Connect`, `Speak`를 선택합니다.
 5. 생성된 설치 링크로 테스트 서버에 봇을 초대합니다.
 
-Discord의 `Application ID`가 `DISCORD_CLIENT_ID`입니다. 테스트 서버 ID는 Discord의 개발자 모드를 켠 뒤 서버를 우클릭해 `서버 ID 복사`로 얻을 수 있습니다.
+Discord의 `Application ID`가 `DISCORD_CLIENT_ID`입니다. 전역 명령을 사용하므로 특정 테스트 서버 ID는 필요하지 않습니다.
 
 ### 2. 환경 변수 만들기
 
@@ -43,9 +48,9 @@ cp .env.example .env
 ```dotenv
 DISCORD_TOKEN=Discord에서_발급한_봇_토큰
 DISCORD_CLIENT_ID=애플리케이션_ID
-DISCORD_GUILD_ID=테스트_서버_ID
 KOFI_URL=https://ko-fi.com/내_Ko-fi_아이디
 LASTFM_API_KEY=Last.fm에서_발급한_API_키
+DATABASE_PATH=/data/djscord.sqlite
 LAVALINK_HOST=lavalink
 LAVALINK_PORT=2333
 LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
@@ -57,6 +62,8 @@ LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
 
 `LASTFM_API_KEY`도 선택값입니다. [Last.fm API 계정 페이지](https://www.last.fm/api/account/create)에서 키를 발급해 넣으면 K-pop 외 장르도 해당 태그의 상위 아티스트 6명을 대표 시드로 사용합니다. 같은 장르 결과는 프로세스 메모리에 24시간 보관해 API 호출을 줄입니다. 키가 없거나 Last.fm 요청이 실패하면 기존 YouTube 검색으로 자동 폴백합니다. Last.fm의 무료 API 이용은 기본적으로 비상업 용도이므로 공개·수익화 전에 [API 이용약관](https://www.last.fm/api/tos)을 확인해야 합니다.
 
+`DATABASE_PATH`는 선택값이며 기본값은 `/data/djscord.sqlite`입니다. Compose의 `bot-data` 볼륨이 이 경로를 보존하므로 `docker compose down`이나 이미지 재빌드 뒤에도 저장 정보가 남습니다. 데이터를 완전히 지우려는 경우에만 `docker compose down -v`를 사용하세요.
+
 ## 실행하기
 
 먼저 이미지를 빌드합니다.
@@ -65,11 +72,13 @@ LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
 docker compose build
 ```
 
-테스트 서버에 한국어 슬래시 명령 9개를 등록합니다. 명령 정의를 변경한 뒤에도 이 명령을 다시 실행해야 합니다.
+설치된 모든 서버에 한국어 전역 슬래시 명령 19개를 등록합니다. 명령 정의를 변경한 뒤에도 이 명령을 다시 실행해야 합니다.
 
 ```bash
 docker compose run --rm bot node dist/deploy-commands.js
 ```
+
+이전 버전에서 Guild 전용 명령을 등록했다면 해당 서버의 기존 Guild 명령을 비워야 최신 전역 명령이 가려지지 않습니다. 전역 명령 등록 후 Discord 클라이언트를 새로고침하세요.
 
 봇과 Lavalink를 백그라운드에서 실행합니다.
 
@@ -92,10 +101,11 @@ docker compose down
 
 ## 테스트와 품질 검사
 
-호스트에 Node.js가 없어도 Docker의 `test` 빌드 단계에서 타입 검사, 60개 이상의 단위 테스트, 린트를 실행할 수 있습니다.
+호스트에 Node.js가 없어도 Docker의 `test` 빌드 단계에서 타입 검사, 120개 이상의 단위·통합 테스트, 린트를 실행할 수 있습니다.
 
 ```bash
 docker build --target test -t djscord-test .
+docker run --rm --entrypoint npm djscord-test run test:coverage
 ```
 
 ## 구조
@@ -118,13 +128,15 @@ lavalink             Lavalink와 YouTube 소스 플러그인 설정
 - `lavalink-client`는 Node.js 봇과 별도 Lavalink 오디오 서버를 연결하는 라이브러리입니다. `new LavalinkManager({ client, nodes, playerOptions, sendToShard })` 형태로 사용합니다. 여기서 `client`는 Discord 봇 ID, `nodes`는 Lavalink 주소·포트·비밀번호, `playerOptions`는 자동재생과 연결 복구 정책, `sendToShard`는 Lavalink가 만든 음성 연결 데이터를 Discord로 보내는 함수입니다.
 - `zod`는 실행 전에 환경 변수의 형태를 검사하는 검증 라이브러리입니다. `z.object({...}).safeParse(process.env)` 형태로 사용하며, 현재 코드는 Discord ID·토큰의 존재 여부, Lavalink 비밀번호 길이, 포트가 올바른 정수인지 검사합니다. 설정이 잘못되면 봇이 애매한 연결 오류 대신 어떤 값을 고쳐야 하는지 바로 알려줍니다.
 - `LastFmGenreArtistProvider`는 Last.fm의 `tag.getTopArtists` HTTP API를 이 봇의 장르 시드 형식으로 바꾸는 어댑터 클래스입니다. `new LastFmGenreArtistProvider({ apiKey })`로 생성하고 `getTopArtists(genre, limit)`에 장르 태그와 가져올 인원 수를 넘깁니다. 현재 코드는 API 키, 5초 타임아웃, 식별 가능한 User-Agent를 사용하며 결과를 24시간 캐시합니다. Node.js 내장 `fetch`가 HTTP 요청을 보내고, 기존 `zod`가 응답 구조를 검사합니다.
+- `DatabaseSync`는 Node.js 22의 내장 `node:sqlite` 모듈이 제공하는 SQLite 연결 클래스입니다. `new DatabaseSync(path)`로 파일을 열고 `prepare(sql).run(...)`으로 값을 저장하거나 `prepare(sql).get(...)`으로 한 행을 읽습니다. 현재 코드는 `path`에 `DATABASE_PATH`를 넘기고, SQL의 `?` 자리에 Discord 서버 ID·사용자 ID·트랙 정보를 별도 인자로 전달해 문자열 결합으로 SQL을 만들지 않습니다. 즐겨찾기, 저장 플레이리스트, 서버 설정, 추천 피드백을 별도 DB 서버 없이 보존하기 위해 사용합니다.
+- `PermissionFlagsBits.ManageGuild`는 `discord.js`가 제공하는 Discord 권한 상수로, 사용자가 `서버 관리` 권한을 갖는지 나타냅니다. `/설정` 명령의 기본 권한과 실행 시 권한 검사에 사용해 일반 사용자가 서버 전체 기본값을 바꾸지 못하게 합니다.
 - Lavalink는 Spring으로 직접 작성한 애플리케이션 코드가 아니라, 이미 빌드된 독립 Java 서버를 Docker 이미지로 실행합니다. 봇은 Lavalink에 검색·재생을 요청하고, Lavalink가 YouTube 소스 해석과 Discord용 오디오 전송을 담당합니다.
 
 ## 제한사항
 
 - 공개 서비스나 상업적 사용을 위한 음원 권한은 포함하지 않습니다.
 - YouTube 내부 변경이나 요청 제한으로 재생이 실패할 수 있습니다.
-- 데이터베이스가 없어 재시작 복구를 지원하지 않습니다.
-- Docker Compose를 사용하는 로컬 단일 인스턴스만 대상으로 합니다.
+- 재생 중인 곡과 대기열 자체는 재시작 복구를 지원하지 않습니다.
+- SQLite 단일 파일을 사용하므로 여러 봇 인스턴스가 동시에 같은 DB 파일을 공유하는 수평 확장 구성은 지원하지 않습니다.
 
 공개 배포 전에 YouTube 이용 정책과 음원 재전송 권한을 별도로 검토해야 합니다.
