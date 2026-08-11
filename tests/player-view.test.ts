@@ -33,34 +33,48 @@ function snapshot(overrides: Partial<PlayerCardSnapshot> = {}): PlayerCardSnapsh
     queueSize: 3,
     status: "playing",
     updatedAt: new Date("2026-08-11T12:00:00Z"),
+    voiceChannelId: "voice-1",
     ...overrides
   };
 }
 
 describe("buildPlayerCard", () => {
-  it("현재 곡, 장르 출처, 진행 바, 다음 곡과 자동재생 상태를 표시한다", () => {
+  it("앨범형 헤더와 길이·요청자·음성채널 중심의 컴팩트한 정보를 표시한다", () => {
     const card = buildPlayerCard(snapshot(), "session-1");
     const embed = card.embeds[0]?.toJSON();
 
     expect(embed?.title).toBe("track-current");
     expect(embed?.url).toContain("youtube.com");
+    expect(embed?.author?.name).toBe("💿 artist");
     expect(embed?.description).toContain("▰▰▰▰▰▰▱▱▱▱▱▱");
     expect(embed?.fields).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "출처", value: expect.stringContaining("장르") }),
-        expect.objectContaining({ name: "다음 곡", value: expect.stringContaining("track-next") }),
-        expect.objectContaining({ name: "자동재생", value: "켜짐" })
+        expect.objectContaining({ name: "길이", value: "3:00" }),
+        expect.objectContaining({ name: "요청자", value: expect.stringContaining("<@user-1>") }),
+        expect.objectContaining({ name: "음성채널", value: "<#voice-1>" })
       ])
     );
+    expect(embed?.footer?.text).toContain("다음 · track-next");
+    expect(embed?.footer?.text).toContain("자동재생 ON");
   });
 
-  it("버튼 6개를 4개와 2개의 두 Action Row로 구성한다", () => {
-    const card = buildPlayerCard(snapshot(), "session-1");
+  it("핵심 제어 5개를 아이콘 한 줄로 표시하고 대기열과 Ko-fi를 보조 줄에 둔다", () => {
+    const card = buildPlayerCard(snapshot(), "session-1", {
+      supportUrl: "https://ko-fi.com/test-user"
+    });
     const rows = card.components.map((row) => row.toJSON());
+    const firstRow = rows[0]?.components ?? [];
+    const secondRow = rows[1]?.components ?? [];
 
-    expect(rows[0]?.components).toHaveLength(4);
-    expect(rows[1]?.components).toHaveLength(2);
-    expect(rows.flatMap(({ components }) => components)).toHaveLength(6);
+    expect(firstRow).toHaveLength(5);
+    expect(firstRow.map(({ emoji }) => emoji?.name)).toEqual(["⏸️", "⏭️", "⏹️", "🔄", "✨"]);
+    expect(secondRow).toHaveLength(2);
+    expect(secondRow[0]).toMatchObject({ label: "대기열" });
+    expect(secondRow[1]).toMatchObject({
+      label: "Ko-fi",
+      style: ButtonStyle.Link,
+      url: "https://ko-fi.com/test-user"
+    });
   });
 
   it("일시정지 상태에서는 계속 버튼을 표시하고 라이브는 진행 바 대신 LIVE로 표시한다", () => {
@@ -71,7 +85,15 @@ describe("buildPlayerCard", () => {
     const firstButton = paused.components[0]?.toJSON().components[0];
 
     expect(paused.embeds[0]?.toJSON().description).toContain("LIVE");
-    expect(firstButton).toMatchObject({ label: "계속", style: ButtonStyle.Success });
+    expect(firstButton).toMatchObject({ emoji: { name: "▶️" }, style: ButtonStyle.Success });
+  });
+
+  it("Ko-fi URL이 없으면 후원 버튼만 숨기고 음악 제어는 유지한다", () => {
+    const card = buildPlayerCard(snapshot(), "session-1");
+    const components = card.components.flatMap((row) => row.toJSON().components);
+
+    expect(components).toHaveLength(6);
+    expect(components.some(({ style }) => style === ButtonStyle.Link)).toBe(false);
   });
 
   it("종료 상태에서는 모든 버튼을 비활성화한다", () => {

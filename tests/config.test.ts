@@ -23,4 +23,13 @@ describe("loadConfig", () => {
       loadConfig({ ...requiredEnvironment, LAVALINK_PASSWORD: "short" })
     ).toThrow("LAVALINK_PASSWORD는 12자 이상이어야 합니다.");
   });
+
+  it("Ko-fi 후원 주소는 공식 HTTPS 페이지일 때만 허용한다", () => {
+    expect(
+      loadConfig({ ...requiredEnvironment, KOFI_URL: "https://ko-fi.com/test-user" }).KOFI_URL
+    ).toBe("https://ko-fi.com/test-user");
+    expect(() =>
+      loadConfig({ ...requiredEnvironment, KOFI_URL: "https://example.com/test-user" })
+    ).toThrow("KOFI_URL은 https://ko-fi.com/ 주소여야 합니다.");
+  });
 });
