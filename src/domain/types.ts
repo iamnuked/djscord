@@ -1,4 +1,4 @@
-export type TrackOrigin = "requested" | "recommended";
+export type TrackOrigin = "requested" | "genre" | "recommended";
 
 export interface MusicTrack {
   artworkUrl?: string | null;

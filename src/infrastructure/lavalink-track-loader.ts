@@ -69,7 +69,12 @@ export class LavalinkTrackLoader implements TrackLoader {
 }
 
 export function fromLavalinkTrack(track: Track): MusicTrack {
-  const origin = track.userData?.origin === "recommended" ? "recommended" : "requested";
+  const origin: TrackOrigin =
+    track.userData?.origin === "recommended"
+      ? "recommended"
+      : track.userData?.origin === "genre"
+        ? "genre"
+        : "requested";
   const requesterId =
     typeof track.userData?.requesterId === "string"
       ? track.userData.requesterId

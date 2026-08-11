@@ -5,9 +5,11 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
 ## 제공 기능
 
 - `/재생`: 곡명 검색, YouTube 영상 URL, 최대 50곡의 YouTube 재생목록
+- `/장르`: 장르 이름으로 YouTube 검색·Mix 후보를 만들고, 미리보기에서 곡을 제거한 뒤 대기열에 추가
 - `/일시정지`, `/계속`, `/스킵`, `/정지`
 - `/대기열`: 현재 곡과 다음 10곡 표시
 - `/자동재생`: 마지막 곡 기반 YouTube Mix 추천 켜기·끄기
+- 채팅 플레이어: 현재 곡, 진행 상태, 다음 곡, 자동재생 상태와 6개 제어 버튼을 한 메시지에서 갱신
 - 서버별 최대 100곡의 독립 대기열
 - 청취자 또는 재생 요청이 5분 동안 없을 때 자동 퇴장
 
@@ -20,7 +22,7 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
 1. [Discord Developer Portal](https://discord.com/developers/applications)에서 `New Application`을 선택합니다.
 2. `Bot` 메뉴에서 봇을 생성하고 Token을 발급합니다. Token은 비밀번호와 같으므로 공개하거나 Git에 커밋하면 안 됩니다.
 3. `Installation`에서 `Guild Install`을 활성화합니다.
-4. 설치 범위에 `bot`과 `applications.commands`를, 봇 권한에 `View Channels`, `Send Messages`, `Connect`, `Speak`를 선택합니다.
+4. 설치 범위에 `bot`과 `applications.commands`를, 봇 권한에 `View Channels`, `Send Messages`, `Embed Links`, `Connect`, `Speak`를 선택합니다.
 5. 생성된 설치 링크로 테스트 서버에 봇을 초대합니다.
 
 Discord의 `Application ID`가 `DISCORD_CLIENT_ID`입니다. 테스트 서버 ID는 Discord의 개발자 모드를 켠 뒤 서버를 우클릭해 `서버 ID 복사`로 얻을 수 있습니다.
@@ -52,7 +54,7 @@ LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
 docker compose build
 ```
 
-테스트 서버에 한국어 슬래시 명령 7개를 등록합니다.
+테스트 서버에 한국어 슬래시 명령 8개를 등록합니다. 명령 정의를 변경한 뒤에도 이 명령을 다시 실행해야 합니다.
 
 ```bash
 docker compose run --rm bot node dist/deploy-commands.js
@@ -79,7 +81,7 @@ docker compose down
 
 ## 테스트와 품질 검사
 
-호스트에 Node.js가 없어도 Docker의 `test` 빌드 단계에서 타입 검사, 37개 이상의 단위 테스트, 린트를 실행할 수 있습니다.
+호스트에 Node.js가 없어도 Docker의 `test` 빌드 단계에서 타입 검사, 60개 이상의 단위 테스트, 린트를 실행할 수 있습니다.
 
 ```bash
 docker build --target test -t djscord-test .
@@ -100,6 +102,8 @@ lavalink             Lavalink와 YouTube 소스 플러그인 설정
 ### 처음 보는 라이브러리 이해하기
 
 - `discord.js`는 Node.js에서 Discord API를 사용하는 라이브러리입니다. `new Client({ intents: [...] })` 형태로 접속 객체를 만들며, `intents`는 봇이 받을 Discord 이벤트의 종류입니다. 이 프로젝트는 서버 명령 처리를 위한 `Guilds`와 음성 채널 상태 감지를 위한 `GuildVoiceStates`만 요청합니다.
+- `EmbedBuilder`는 `discord.js`에서 제목·썸네일·필드를 가진 카드형 메시지를 만드는 클래스입니다. `new EmbedBuilder().setTitle(...).addFields(...)` 형태로 내용을 조립합니다. 현재 코드는 곡 정보와 진행 상태를 보기 쉽게 표시하기 위해 사용하며, 봇 역할에 `Embed Links` 권한이 필요합니다.
+- `ButtonBuilder`와 `StringSelectMenuBuilder`는 `discord.js`의 메시지 입력 컴포넌트를 만드는 클래스입니다. 각각 `.setCustomId(...)`로 클릭 이벤트를 구분하고, `.setLabel(...)` 또는 `.addOptions(...)`로 화면 내용을 정합니다. 플레이어 제어 버튼과 장르 미리보기의 다중 선택 목록에 사용합니다.
 - `lavalink-client`는 Node.js 봇과 별도 Lavalink 오디오 서버를 연결하는 라이브러리입니다. `new LavalinkManager({ client, nodes, playerOptions, sendToShard })` 형태로 사용합니다. 여기서 `client`는 Discord 봇 ID, `nodes`는 Lavalink 주소·포트·비밀번호, `playerOptions`는 자동재생과 연결 복구 정책, `sendToShard`는 Lavalink가 만든 음성 연결 데이터를 Discord로 보내는 함수입니다.
 - `zod`는 실행 전에 환경 변수의 형태를 검사하는 검증 라이브러리입니다. `z.object({...}).safeParse(process.env)` 형태로 사용하며, 현재 코드는 Discord ID·토큰의 존재 여부, Lavalink 비밀번호 길이, 포트가 올바른 정수인지 검사합니다. 설정이 잘못되면 봇이 애매한 연결 오류 대신 어떤 값을 고쳐야 하는지 바로 알려줍니다.
 - Lavalink는 Spring으로 직접 작성한 애플리케이션 코드가 아니라, 이미 빌드된 독립 Java 서버를 Docker 이미지로 실행합니다. 봇은 Lavalink에 검색·재생을 요청하고, Lavalink가 YouTube 소스 해석과 Discord용 오디오 전송을 담당합니다.

@@ -32,7 +32,8 @@ export function formatQueue(
 }
 
 function formatTrack(track: MusicTrack): string {
-  const origin = track.origin === "recommended" ? "추천" : "요청";
+  const origin =
+    track.origin === "recommended" ? "추천" : track.origin === "genre" ? "장르" : "요청";
   return `${track.title} · ${track.author} · ${formatDuration(track)} · ${origin}`;
 }
 
@@ -45,4 +46,3 @@ function formatDuration(track: MusicTrack): string {
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
 }
-
