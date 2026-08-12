@@ -27,7 +27,7 @@ esac
 command -v aws >/dev/null 2>&1 || { echo "aws CLI가 필요합니다." >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "Docker가 필요합니다." >&2; exit 1; }
 
-mkdir -p "${DATA_DIR:-/opt/djscord/data}"
+install -d -m 0750 -o 1000 -g 1000 "${DATA_DIR:-/opt/djscord/data}"
 "$script_dir/render-env.sh" "$bot_image" "$env_path"
 
 aws ecr get-login-password --region "$aws_region" \

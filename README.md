@@ -99,6 +99,12 @@ docker compose logs -f bot lavalink
 docker compose down
 ```
 
+## AWS에 배포하기
+
+서울 리전의 EC2 한 대에 ECR 이미지와 Docker Compose로 배포하는 운영 구성이 포함되어 있습니다. CloudFormation으로 외부 인바운드가 없는 EC2, 암호화된 EBS, ECR, S3 릴리스 버킷, CloudWatch 로그 그룹과 최소 권한 EC2 역할을 생성합니다.
+
+계정 로그인, 과금 리소스 생성, Parameter Store 비밀값 등록, 이미지 게시, 원격 배포와 롤백 순서는 [AWS EC2 배포 가이드](docs/aws-deployment.md)를 따르세요.
+
 ## 테스트와 품질 검사
 
 호스트에 Node.js가 없어도 Docker의 `test` 빌드 단계에서 타입 검사, 120개 이상의 단위·통합 테스트, 린트를 실행할 수 있습니다.

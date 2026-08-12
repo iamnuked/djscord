@@ -11,7 +11,7 @@ command -v docker >/dev/null 2>&1 || { echo "Docker가 필요합니다." >&2; ex
 command -v git >/dev/null 2>&1 || { echo "Git이 필요합니다." >&2; exit 1; }
 
 cd "$project_root"
-if [ -n "$(git status --porcelain)" ]; then
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "커밋되지 않은 변경사항이 있어 릴리스를 만들 수 없습니다." >&2
   exit 1
 fi
@@ -37,29 +37,41 @@ registry=${ecr_repository_uri%%/*}
 aws ecr get-login-password --region "$aws_region" \
   | docker login --username AWS --password-stdin "$registry" >/dev/null
 
-bot_image="$ecr_repository_uri:$image_tag"
-docker buildx build \
-  --platform linux/amd64 \
-  --target production \
-  --tag "$bot_image" \
-  --push \
-  "$project_root"
-
 temporary_directory=$(mktemp -d)
 trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
-mkdir -p "$temporary_directory/deploy" "$temporary_directory/lavalink"
-cp "$project_root/compose.prod.yaml" "$temporary_directory/compose.prod.yaml"
-cp "$project_root/lavalink/application.yml" "$temporary_directory/lavalink/application.yml"
-cp "$project_root/deploy/deploy.sh" "$temporary_directory/deploy/deploy.sh"
-cp "$project_root/deploy/render-env.sh" "$temporary_directory/deploy/render-env.sh"
-cp "$project_root/deploy/rollback.sh" "$temporary_directory/deploy/rollback.sh"
-cp "$project_root/deploy/backup-sqlite.sh" "$temporary_directory/deploy/backup-sqlite.sh"
-cp "$project_root/deploy/restore-sqlite.sh" "$temporary_directory/deploy/restore-sqlite.sh"
+source_directory="$temporary_directory/source"
+mkdir -p "$source_directory"
+git archive HEAD | tar -x -C "$source_directory"
+
+bot_image="$ecr_repository_uri:$image_tag"
+repository_name=${ecr_repository_uri#*/}
+if aws ecr describe-images \
+  --region "$aws_region" \
+  --repository-name "$repository_name" \
+  --image-ids imageTag="$image_tag" \
+  >/dev/null 2>&1; then
+  echo "이미 게시된 ECR 이미지를 재사용합니다: $bot_image"
+else
+  docker buildx build \
+    --platform linux/amd64 \
+    --target production \
+    --tag "$bot_image" \
+    --push \
+    "$source_directory"
+fi
+
+bundle_directory="$temporary_directory/bundle"
+mkdir -p "$bundle_directory/deploy" "$bundle_directory/lavalink"
+cp "$source_directory/compose.prod.yaml" "$bundle_directory/compose.prod.yaml"
+cp "$source_directory/lavalink/application.yml" "$bundle_directory/lavalink/application.yml"
+cp "$source_directory/deploy/deploy.sh" "$bundle_directory/deploy/deploy.sh"
+cp "$source_directory/deploy/render-env.sh" "$bundle_directory/deploy/render-env.sh"
+cp "$source_directory/deploy/rollback.sh" "$bundle_directory/deploy/rollback.sh"
+cp "$source_directory/deploy/backup-sqlite.sh" "$bundle_directory/deploy/backup-sqlite.sh"
+cp "$source_directory/deploy/restore-sqlite.sh" "$bundle_directory/deploy/restore-sqlite.sh"
 
 archive_path="$temporary_directory/djscord-$image_tag.tar.gz"
-tar -C "$temporary_directory" \
-  --exclude "$(basename "$archive_path")" \
-  -czf "$archive_path" compose.prod.yaml deploy lavalink
+tar -C "$bundle_directory" -czf "$archive_path" compose.prod.yaml deploy lavalink
 release_uri="s3://$release_bucket/releases/$image_tag.tar.gz"
 aws s3 cp "$archive_path" "$release_uri" --region "$aws_region" >/dev/null
 

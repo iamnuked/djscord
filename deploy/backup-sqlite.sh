@@ -9,7 +9,7 @@ timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 backup_name="djscord-$timestamp.sqlite"
 data_dir=${DATA_DIR:-/opt/djscord/data}
 
-mkdir -p "$data_dir/backups"
+install -d -m 0750 -o 1000 -g 1000 "$data_dir/backups"
 cd "$app_dir"
 docker compose --env-file "$env_path" -f "$compose_file" exec -T bot \
   node --input-type=module -e '

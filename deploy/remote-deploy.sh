@@ -42,11 +42,21 @@ command_id=$(aws ssm send-command \
   --query Command.CommandId \
   --output text)
 
-wait_status=0
-aws ssm wait command-executed \
-  --region "$aws_region" \
-  --command-id "$command_id" \
-  --instance-id "$instance_id" || wait_status=$?
+attempts=0
+status=Pending
+while [ "$attempts" -lt 120 ]; do
+  status=$(aws ssm get-command-invocation \
+    --region "$aws_region" \
+    --command-id "$command_id" \
+    --instance-id "$instance_id" \
+    --query Status \
+    --output text 2>/dev/null || printf Pending)
+  case "$status" in
+    Success|Cancelled|TimedOut|Failed) break ;;
+  esac
+  attempts=$((attempts + 1))
+  sleep 5
+done
 
 aws ssm get-command-invocation \
   --region "$aws_region" \
@@ -55,4 +65,4 @@ aws ssm get-command-invocation \
   --query '{Status:Status,StandardOutput:StandardOutputContent,StandardError:StandardErrorContent}' \
   --output yaml
 
-exit "$wait_status"
+[ "$status" = "Success" ]
