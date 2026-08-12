@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Single-host production infrastructure for the djscord Discord music bot
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC that contains the public subnet
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet with a route to an internet gateway
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.medium
+      - t3.large
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  ComposeVersion:
+    Type: String
+    Default: v5.1.2
+
+Resources:
+  BotRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: djscord/bot
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the newest 20 release images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  ReleaseBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldReleaseVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+
+  BotLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /djscord/prod/bot
+      RetentionInDays: 30
+
+  LavalinkLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /djscord/prod/lavalink
+      RetentionInDays: 30
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: ReadDjscordConfigurationAndReleases
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/djscord/prod/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub ${ReleaseBucket.Arn}/releases/*
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Outbound-only access for djscord
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  BotInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref InstanceSecurityGroup
+          SubnetId: !Ref SubnetId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: false
+            Encrypted: true
+            VolumeSize: 30
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: djscord-prod
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          dnf update -y
+          dnf install -y docker curl
+          systemctl enable --now docker
+          install -d -m 0755 /usr/local/lib/docker/cli-plugins
+          case "$(uname -m)" in
+            x86_64) compose_arch=x86_64 ;;
+            aarch64) compose_arch=aarch64 ;;
+            *) echo "Unsupported architecture" >&2; exit 1 ;;
+          esac
+          compose_name=docker-compose-linux-$compose_arch
+          compose_base=https://github.com/docker/compose/releases/download/${ComposeVersion}
+          curl -fsSL $compose_base/$compose_name -o /tmp/$compose_name
+          curl -fsSL $compose_base/$compose_name.sha256 -o /tmp/$compose_name.sha256
+          cd /tmp
+          sha256sum -c $compose_name.sha256
+          install -m 0755 /tmp/$compose_name /usr/local/lib/docker/cli-plugins/docker-compose
+          install -d -m 0755 /opt/djscord /opt/djscord/releases
+          install -d -m 0750 -o 1000 -g 1000 /opt/djscord/data
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance managed through Systems Manager
+    Value: !Ref BotInstance
+  EcrRepositoryUri:
+    Description: Private ECR repository for immutable bot images
+    Value: !GetAtt BotRepository.RepositoryUri
+  ReleaseBucketName:
+    Description: Private S3 bucket for Compose and deployment scripts
+    Value: !Ref ReleaseBucket
+  BotLogGroupName:
+    Value: !Ref BotLogGroup
+  LavalinkLogGroupName:
+    Value: !Ref LavalinkLogGroup

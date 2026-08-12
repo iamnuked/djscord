@@ -18,7 +18,7 @@ describe("AWS production Compose", () => {
     const compose = readFileSync(join(projectRoot, "compose.prod.yaml"), "utf8");
 
     expect(compose).toContain("image: ${BOT_IMAGE:?");
-    expect(compose).toContain("node dist/healthcheck.js");
+    expect(compose).toMatch(/"node", "dist\/healthcheck\.js"/);
     expect(compose).toContain("${DATA_DIR:-/opt/djscord/data}");
     expect(compose).toContain("mem_limit:");
     expect(compose).toContain("cpus:");

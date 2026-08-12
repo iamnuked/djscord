@@ -30,6 +30,7 @@ import {
 import type { AppConfig } from "../config.js";
 import { GuildStateStore } from "../domain/guild-state.js";
 import type { MusicTrack } from "../domain/types.js";
+import { HealthHeartbeat } from "../health/heartbeat.js";
 import {
   fromLavalinkTrack,
   LavalinkTrackLoader
@@ -137,6 +138,11 @@ export function createMusicBot(config: AppConfig): MusicBot {
     sendToShard: (guildId, payload) => {
       client.guilds.cache.get(guildId)?.shard.send(payload);
     }
+  });
+  const healthHeartbeat = new HealthHeartbeat({
+    isReady: () =>
+      client.isReady() &&
+      lavalink.nodeManager.nodes.get("local-lavalink")?.connected === true
   });
 
   const playerMessages = new PlayerMessageController({
@@ -1531,9 +1537,16 @@ export function createMusicBot(config: AppConfig): MusicBot {
     client,
     lavalink,
     async start() {
-      await client.login(config.DISCORD_TOKEN);
+      healthHeartbeat.start();
+      try {
+        await client.login(config.DISCORD_TOKEN);
+      } catch (error) {
+        healthHeartbeat.stop();
+        throw error;
+      }
     },
     stop() {
+      healthHeartbeat.stop();
       client.destroy();
       repository.close();
     }
