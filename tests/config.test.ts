@@ -50,4 +50,42 @@ describe("loadConfig", () => {
       "LASTFM_API_KEY는 빈 값일 수 없습니다."
     );
   });
+
+  it("DJ Engine URL과 API 키는 함께 설정해야 한다", () => {
+    const enabled = loadConfig({
+      ...requiredEnvironment,
+      DJENGINE_API_KEY: "x".repeat(32),
+      DJENGINE_BASE_URL: "http://djengine:8787"
+    });
+
+    expect(enabled).toMatchObject({
+      DJENGINE_API_KEY: "x".repeat(32),
+      DJENGINE_BASE_URL: "http://djengine:8787"
+    });
+    expect(() =>
+      loadConfig({ ...requiredEnvironment, DJENGINE_BASE_URL: "http://djengine:8787" })
+    ).toThrow(/DJENGINE_API_KEY/);
+    expect(() =>
+      loadConfig({ ...requiredEnvironment, DJENGINE_API_KEY: "x".repeat(32) })
+    ).toThrow(/DJENGINE_BASE_URL/);
+  });
+
+  it("DJ Engine API 키는 32바이트 이상이어야 한다", () => {
+    expect(() =>
+      loadConfig({
+        ...requiredEnvironment,
+        DJENGINE_API_KEY: "x".repeat(31),
+        DJENGINE_BASE_URL: "http://djengine:8787"
+      })
+    ).toThrow(/DJENGINE_API_KEY.*32/u);
+
+    const multibyteKey = "가".repeat(11);
+    expect(
+      loadConfig({
+        ...requiredEnvironment,
+        DJENGINE_API_KEY: multibyteKey,
+        DJENGINE_BASE_URL: "http://djengine:8787"
+      })
+    ).toMatchObject({ DJENGINE_API_KEY: multibyteKey });
+  });
 });
