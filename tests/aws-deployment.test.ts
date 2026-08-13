@@ -93,10 +93,10 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$name" in
-  */DISCORD_TOKEN) printf '%s' 'discord-secret' ;;
+  */DISCORD_TOKEN) printf '%s' "discord's-secret" ;;
   */DISCORD_CLIENT_ID) printf '%s' '123456789012345678' ;;
   */LAVALINK_PASSWORD) printf '%s' 'lavalink-secret-value' ;;
-  */DJENGINE_API_KEY) printf '%s' 'djengine-secret-value-32-bytes!!' ;;
+  */DJENGINE_API_KEY) printf '%s' 'djengine-secret-value-32-bytes!!$oops' ;;
   */MIX_INGEST_URL) printf '%s' 'https://mix.example/api/internal/v1' ;;
   */MIX_INGEST_SECRET) printf '%s' 'mix-ingest-secret-value' ;;
   */MIX_PUBLIC_URL) printf '%s' 'https://mix.example/mix' ;;
@@ -129,30 +129,30 @@ esac
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).not.toContain("discord-secret");
+      expect(result.stdout).not.toContain("discord's-secret");
       expect(statSync(outputPath).mode & 0o777).toBe(0o600);
       expect(readFileSync(outputPath, "utf8")).toBe(
         [
-          "BOT_IMAGE=123.dkr.ecr.ap-northeast-2.amazonaws.com/djscord/bot:abc123",
-          "DJENGINE_IMAGE=123.dkr.ecr.ap-northeast-2.amazonaws.com/djscord/engine:def456",
-          "AWS_REGION=ap-northeast-2",
-          "DATA_DIR=/opt/djscord/data",
-          "DATABASE_PATH=/data/djscord.sqlite",
-          "DISCORD_TOKEN=discord-secret",
-          "DISCORD_CLIENT_ID=123456789012345678",
-          "KOFI_URL=https://ko-fi.com/example",
-          "LASTFM_API_KEY=lastfm-secret",
-          "LAVALINK_HOST=lavalink",
-          "LAVALINK_PORT=2333",
-          "LAVALINK_PASSWORD=lavalink-secret-value",
-          "DJENGINE_API_KEY=djengine-secret-value-32-bytes!!",
-          "DJENGINE_BASE_URL=http://engine:8787",
-          "DJENGINE_DATA_DIR=/opt/djengine/data",
-          "DJENGINE_HOST_MUSIC_ROOT=/opt/djengine/music",
-          "DJENGINE_HOST_REKORDBOX_XML=/opt/djengine/config/rekordbox.xml",
-          "MIX_INGEST_URL=https://mix.example/api/internal/v1",
-          "MIX_INGEST_SECRET=mix-ingest-secret-value",
-          "MIX_PUBLIC_URL=https://mix.example/mix",
+          "BOT_IMAGE='123.dkr.ecr.ap-northeast-2.amazonaws.com/djscord/bot:abc123'",
+          "DJENGINE_IMAGE='123.dkr.ecr.ap-northeast-2.amazonaws.com/djscord/engine:def456'",
+          "AWS_REGION='ap-northeast-2'",
+          "DATA_DIR='/opt/djscord/data'",
+          "DATABASE_PATH='/data/djscord.sqlite'",
+          "DISCORD_TOKEN='discord\\'s-secret'",
+          "DISCORD_CLIENT_ID='123456789012345678'",
+          "KOFI_URL='https://ko-fi.com/example'",
+          "LASTFM_API_KEY='lastfm-secret'",
+          "LAVALINK_HOST='lavalink'",
+          "LAVALINK_PORT='2333'",
+          "LAVALINK_PASSWORD='lavalink-secret-value'",
+          "DJENGINE_API_KEY='djengine-secret-value-32-bytes!!$oops'",
+          "DJENGINE_BASE_URL='http://engine:8787'",
+          "DJENGINE_DATA_DIR='/opt/djengine/data'",
+          "DJENGINE_HOST_MUSIC_ROOT='/opt/djengine/music'",
+          "DJENGINE_HOST_REKORDBOX_XML='/opt/djengine/config/rekordbox.xml'",
+          "MIX_INGEST_URL='https://mix.example/api/internal/v1'",
+          "MIX_INGEST_SECRET='mix-ingest-secret-value'",
+          "MIX_PUBLIC_URL='https://mix.example/mix'",
           ""
         ].join("\n")
       );
@@ -297,6 +297,7 @@ describe("EC2 secret publisher", () => {
     const directory = mkdtempSync(join(tmpdir(), "djscord-secrets-"));
     const envPath = join(directory, ".env");
     const fakeAws = join(directory, "aws");
+    const callsPath = join(directory, "aws-calls.log");
     writeFileSync(
       envPath,
       [
@@ -307,16 +308,25 @@ describe("EC2 secret publisher", () => {
         ""
       ].join("\n")
     );
-    writeFileSync(fakeAws, "#!/bin/sh\nexit 0\n");
+    writeFileSync(fakeAws, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$AWS_CALL_LOG\"\nexit 0\n");
     chmodSync(fakeAws, 0o755);
 
     try {
       const result = spawnSync("sh", [join(projectRoot, "deploy/push-secrets.sh"), envPath], {
         encoding: "utf8",
-        env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ""}` }
+        env: {
+          ...process.env,
+          AWS_CALL_LOG: callsPath,
+          PATH: `${directory}:${process.env.PATH ?? ""}`
+        }
       });
 
       expect(result.status, result.stderr).toBe(0);
+      const awsCalls = readFileSync(callsPath, "utf8");
+      expect(awsCalls).toContain("ssm delete-parameters");
+      expect(awsCalls).toContain("/djscord/prod/MIX_INGEST_URL");
+      expect(awsCalls).toContain("/djscord/prod/MIX_INGEST_SECRET");
+      expect(awsCalls).toContain("/djscord/prod/MIX_PUBLIC_URL");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -375,6 +385,14 @@ describe("DJ Engine release lifecycle", () => {
     expect(rustTestTarget).toBeLessThan(runtimeTarget);
   });
 
+  it("refuses to archive uncommitted source while keeping the local Rekordbox XML out of releases", () => {
+    const publishScript = readFileSync(join(projectRoot, "deploy/publish-release.sh"), "utf8");
+
+    expect(publishScript).toContain("git status --porcelain --untracked-files=all");
+    expect(publishScript).toContain("sed '/^?? rekordbox\\.xml$/d'");
+    expect(publishScript).toContain("git archive HEAD");
+  });
+
   it("documents import status and playable playlist verification after media placement", () => {
     const guide = readFileSync(join(projectRoot, "docs/aws-deployment.md"), "utf8");
 
@@ -382,6 +400,9 @@ describe("DJ Engine release lifecycle", () => {
     expect(guide).toContain("/api/v1/imports/$IMPORT_JOB_ID");
     expect(guide).toContain("analyzedTracks");
     expect(guide).toContain("/api/v1/playlists?limit=100");
+    expect(guide).toContain("/mix?guild=...");
+    expect(guide).toContain("docker stats --no-stream");
+    expect(guide).toContain("audio underrun");
     expect(guide).not.toContain("./deploy/remote-deploy.sh 12자리커밋해시\n");
   });
 });
@@ -403,5 +424,6 @@ describe("AWS infrastructure template", () => {
     expect(template).toContain("Encrypted: true");
     expect(template).toContain("DeleteOnTermination: false");
     expect(template).toContain("HttpTokens: required");
+    expect(template).toContain("dnf install -y docker curl util-linux");
   });
 });

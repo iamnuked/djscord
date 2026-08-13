@@ -73,6 +73,10 @@ describe("createHelpReply", () => {
 
     expect(djText).toContain("/디제이 목록");
     expect(djText).toContain("/디제이 시작");
+    for (const control of ["일시정지", "계속", "스킵", "종료"]) {
+      expect(djText).toContain(`/디제이 ${control}`);
+    }
+    expect(djText).toContain("플레이어 버튼");
     expect(djText).toMatch(/지원하지|사용할 수 없/u);
     for (const unsupported of ["반복", "셔플", "탐색", "자동재생", "좋아요", "저장"]) {
       expect(djText).toContain(unsupported);

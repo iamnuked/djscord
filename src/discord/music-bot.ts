@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   ActionRowBuilder,
+  type AutocompleteInteraction,
   ButtonBuilder,
   ButtonStyle,
   type ButtonInteraction,
@@ -35,9 +36,18 @@ import {
   fromLavalinkTrack,
   LavalinkTrackLoader
 } from "../infrastructure/lavalink-track-loader.js";
+import {
+  DjEngineClient,
+  type DjEnergyProfile
+} from "../infrastructure/djengine-client.js";
 import { LastFmGenreArtistProvider } from "../infrastructure/lastfm-genre-artist-provider.js";
+import { MixIngestClient } from "../infrastructure/mix-ingest-client.js";
 import { SqliteMusicRepository } from "../infrastructure/sqlite-music-repository.js";
 import { AutoplayService } from "../music/autoplay-service.js";
+import { DjMixPublisher } from "../music/dj-mix-publisher.js";
+import { DjPlaybackService } from "../music/dj-playback-service.js";
+import { DjStartReservations } from "../music/dj-start-reservations.js";
+import { GuildRegistrySynchronizer } from "../music/guild-registry-synchronizer.js";
 import { GenrePlaylistService } from "../music/genre-playlist.js";
 import { GuildTaskQueue } from "../music/guild-task-queue.js";
 import { IdleTimerManager } from "../music/idle-timer.js";
@@ -51,21 +61,28 @@ import {
 } from "../music/playback-controls.js";
 import { restoreSavedTracks } from "../music/saved-playlist.js";
 import { TrackResolverService } from "../music/track-resolver.js";
+import { isDjInteractionAllowed } from "./dj-interaction-policy.js";
+import { cleanupRemovedGuild } from "./guild-removal.js";
 import { GenreDraftStore, type GenreDraft } from "./genre-draft.js";
+import { createHelpReply } from "./help-view.js";
 import {
   PlayerMessageController,
   type PlayerMessagePayload
 } from "./player-message-controller.js";
 import type { PlayerCardSnapshot } from "./player-view.js";
-import { createHelpReply } from "./help-view.js";
 import { formatQueue } from "./queue-view.js";
-import { validateVoiceAccess } from "./voice-access.js";
+import {
+  validateVoiceAccess,
+  validateVoiceMembership
+} from "./voice-access.js";
 
 const IDLE_TIMEOUT_MS = 300_000;
 const MANUAL_QUEUE_LIMIT = 100;
 const SEARCH_SELECTION_TIMEOUT_MS = 30_000;
+const AUTOCOMPLETE_TIMEOUT_MS = 2_000;
 const GENRE_DRAFT_TIMEOUT_MS = 600_000;
 const GENRE_PAGE_SIZE = 10;
+const GUILD_REGISTRY_SYNC_INTERVAL_MS = 60_000;
 
 interface GenreDraftContext {
   interaction: ChatInputCommandInteraction;
@@ -80,7 +97,7 @@ export interface MusicBot {
   client: Client;
   lavalink: LavalinkManager;
   start(): Promise<void>;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 export function createMusicBot(config: AppConfig): MusicBot {
@@ -93,15 +110,55 @@ export function createMusicBot(config: AppConfig): MusicBot {
   const pausedForEmptyChannel = new Set<string>();
   const autoplayFailures = new Set<string>();
   const guildTasks = new GuildTaskQueue();
+  const pendingDjStarts = new DjStartReservations<Player>();
   const genreDrafts = new GenreDraftStore<GenreDraftContext>({
     idFactory: randomUUID,
     ttlMs: GENRE_DRAFT_TIMEOUT_MS
   });
   const genreDraftTimeouts = new Map<string, NodeJS.Timeout>();
+  let stopping = false;
+  let stopPromise: Promise<void> | undefined;
   const genreArtistProvider =
     config.LASTFM_API_KEY === undefined
       ? undefined
       : new LastFmGenreArtistProvider({ apiKey: config.LASTFM_API_KEY });
+  const djEngine =
+    config.DJENGINE_BASE_URL === undefined || config.DJENGINE_API_KEY === undefined
+      ? undefined
+      : new DjEngineClient({
+          apiKey: config.DJENGINE_API_KEY,
+          baseUrl: config.DJENGINE_BASE_URL
+        });
+  const mixIngest =
+    config.MIX_INGEST_URL === undefined ||
+    config.MIX_INGEST_SECRET === undefined ||
+    config.MIX_PUBLIC_URL === undefined
+      ? undefined
+      : new MixIngestClient({
+          baseUrl: config.MIX_INGEST_URL,
+          publicUrl: config.MIX_PUBLIC_URL,
+          secret: config.MIX_INGEST_SECRET
+        });
+  const mixPublisher =
+    djEngine === undefined || mixIngest === undefined
+      ? undefined
+      : new DjMixPublisher(djEngine, mixIngest);
+  const djPlayback =
+    djEngine === undefined ? undefined : new DjPlaybackService(djEngine, mixPublisher);
+  const guildRegistry =
+    mixIngest === undefined
+      ? undefined
+      : new GuildRegistrySynchronizer({
+          intervalMs: GUILD_REGISTRY_SYNC_INTERVAL_MS,
+          onError: (error) => {
+            console.error("Discord 서버 목록을 mix 웹에 동기화하지 못했습니다.", error);
+          },
+          sync: () => mixIngest.syncGuilds(
+            [...client.guilds.cache.values()]
+              .map((guild) => ({ icon: guild.iconURL(), id: guild.id, name: guild.name }))
+              .sort((left, right) => left.id.localeCompare(right.id))
+          )
+        });
 
   const lavalink = new LavalinkManager({
     autoMove: true,
@@ -165,6 +222,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
   });
 
   async function enqueueRecommendation(player: Player, lastPlayedTrack: Track): Promise<void> {
+    if (isDjEnginePlayer(player) || isDjEngineRawTrack(lastPlayedTrack)) {
+      return;
+    }
     const state = states.getOrCreate(player.guildId);
     if (!state.autoplayEnabled || manualQueueLength(player) > 0) {
       return;
@@ -199,6 +259,8 @@ export function createMusicBot(config: AppConfig): MusicBot {
         const latestState = states.getOrCreate(player.guildId);
         if (
           lavalink.getPlayer(player.guildId) !== player ||
+          isDjModeActive(player.guildId) ||
+          isDjEnginePlayer(player) ||
           !latestState.autoplayEnabled ||
           manualQueueLength(player) > 0
         ) {
@@ -246,7 +308,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
     }
     idleTimers.cancel(player.guildId);
     autoplayFailures.delete(player.guildId);
-    states.rememberTrack(player.guildId, track.info.identifier);
+    if (!isDjEnginePlayer(player)) {
+      states.rememberTrack(player.guildId, track.info.identifier);
+    }
     void refreshPlayerMessage(player);
   });
 
@@ -255,27 +319,48 @@ export function createMusicBot(config: AppConfig): MusicBot {
   });
 
   lavalink.on("trackError", (player, track, payload) => {
+    if (isDjEnginePlayer(player)) {
+      console.error(`DJ Engine 스트림 재생 오류: guild=${player.guildId}`);
+      cleanupDjPlayerInBackground(player, "DJ Engine 스트림 재생 오류");
+      return;
+    }
     console.error(`트랙 재생 오류: ${track?.info.title ?? "알 수 없는 곡"}`, payload);
     void sendToPlayerChannel(player, "현재 곡을 재생하지 못해 다음 곡으로 넘어갑니다.");
     void refreshPlayerMessage(player);
   });
 
   lavalink.on("trackStuck", (player, track) => {
+    if (isDjEnginePlayer(player)) {
+      console.error(`DJ Engine 스트림 멈춤: guild=${player.guildId}`);
+      cleanupDjPlayerInBackground(player, "DJ Engine 스트림 멈춤");
+      return;
+    }
     console.error(`트랙 멈춤: ${track?.info.title ?? "알 수 없는 곡"}`);
     void sendToPlayerChannel(player, "현재 곡의 재생이 멈춰 다음 곡으로 넘어갑니다.");
     void refreshPlayerMessage(player);
   });
 
   lavalink.on("queueEnd", (player) => {
+    if (isDjEnginePlayer(player)) {
+      cleanupDjPlayerInBackground(player, "DJ Engine 스트림 종료");
+      return;
+    }
     schedulePlayerDestroy(player);
     void refreshPlayerMessage(player);
   });
 
   lavalink.on("playerDestroy", (player) => {
+    const replacement = lavalink.getPlayer(player.guildId);
+    if (replacement !== undefined && replacement !== player) {
+      return;
+    }
     idleTimers.cancel(player.guildId);
     pausedForEmptyChannel.delete(player.guildId);
     autoplayFailures.delete(player.guildId);
     states.resetSession(player.guildId);
+    void djPlayback?.closeGuild(player.guildId, player).catch((error: unknown) => {
+      console.error(`DJ Engine 세션 정리에 실패했습니다: guild=${player.guildId}`, error);
+    });
     void playerMessages.finish(player.guildId).catch((error: unknown) => {
       console.error("종료된 플레이어 메시지를 갱신하지 못했습니다.", error);
     });
@@ -286,10 +371,20 @@ export function createMusicBot(config: AppConfig): MusicBot {
   });
 
   client.on("voiceStateUpdate", (oldState, newState) => {
-    void handleVoiceStateUpdate(oldState, newState);
+    void handleVoiceStateUpdate(oldState, newState).catch((error: unknown) => {
+      console.error(`음성 채널 상태 처리에 실패했습니다: guild=${newState.guild.id}`, error);
+    });
   });
 
   client.on("interactionCreate", (interaction) => {
+    if (interaction.isAutocomplete()) {
+      void handleDjAutocomplete(interaction).catch(async (error: unknown) => {
+        console.error("DJ Engine 자동완성 처리 중 오류가 발생했습니다.", error);
+        await interaction.respond([]).catch(() => undefined);
+      });
+      return;
+    }
+
     if (interaction.isChatInputCommand()) {
       void handleCommand(interaction).catch(async (error: unknown) => {
         console.error("명령 처리 중 오류가 발생했습니다.", error);
@@ -319,13 +414,47 @@ export function createMusicBot(config: AppConfig): MusicBot {
 
   client.once(Events.ClientReady, async (readyClient) => {
     await lavalink.init({ id: readyClient.user.id, username: readyClient.user.username });
+    await guildRegistry?.trigger();
+    guildRegistry?.start();
     console.info(`${readyClient.user.tag} 계정으로 로그인했습니다.`);
   });
 
+  client.on(Events.GuildCreate, () => void guildRegistry?.trigger());
+  client.on(Events.GuildDelete, (guild) => {
+    // 큐에 들어가기 전에 취소 표시를 남겨 진행 중인 `/디제이 시작`이 다음 경계에서 멈추게 합니다.
+    pendingDjStarts.cancel(guild.id);
+    // 재생 정리가 오래 걸려도 웹 권한 교집합에서는 제거된 서버를 즉시 제외합니다.
+    void guildRegistry?.trigger();
+    void cleanupDeletedGuild(guild.id).catch((error: unknown) => {
+      console.error(`제거된 Discord 서버 정리에 실패했습니다: guild=${guild.id}`, error);
+    });
+  });
+
   async function handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (stopping) {
+      await interaction.reply({
+        content: "봇이 종료 중입니다. 잠시 후 다시 시도해주세요.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
     if (interaction.guild === null || interaction.guildId === null) {
       await interaction.reply({
         content: "Discord 서버 안에서만 사용할 수 있습니다.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    if (
+      isDjModeActive(interaction.guildId) &&
+      !isDjInteractionAllowed({
+        commandName: interaction.commandName,
+        kind: "command"
+      })
+    ) {
+      await interaction.reply({
+        content: "DJ 믹스 중에는 `/디제이` 제어와 `/볼륨`만 사용할 수 있습니다.",
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -374,6 +503,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
       case "장르":
         await handleGenre(interaction);
         break;
+      case "디제이":
+        await handleDj(interaction);
+        break;
       case "설정":
         await handleSettings(interaction);
         break;
@@ -397,7 +529,92 @@ export function createMusicBot(config: AppConfig): MusicBot {
     }
   }
 
+  async function handleDjAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+    if (
+      stopping ||
+      interaction.guildId === null ||
+      interaction.commandName !== "디제이" ||
+      djPlayback === undefined
+    ) {
+      await interaction.respond([]);
+      return;
+    }
+    const focused = interaction.options.getFocused(true);
+    if (focused.name !== "플레이리스트") {
+      await interaction.respond([]);
+      return;
+    }
+    const query = String(focused.value).trim().toLocaleLowerCase("ko");
+    const response = await resolveBefore(
+      djPlayback.listPlaylists(),
+      AUTOCOMPLETE_TIMEOUT_MS
+    );
+    if (response === undefined) {
+      await interaction.respond([]);
+      return;
+    }
+    const playlists = Array.isArray(response) ? response : response.data;
+    const choices = playlists
+      .filter(({ id, name }) =>
+        id.length <= 100 &&
+        (query === "" ||
+          id.toLocaleLowerCase("ko").includes(query) ||
+          name.toLocaleLowerCase("ko").includes(query))
+      )
+      .slice(0, 25)
+      .map(({ id, name }) => ({ name: truncate(name, 100), value: id }));
+    await interaction.respond(choices);
+  }
+
+  async function cleanupDeletedGuild(guildId: string): Promise<void> {
+    try {
+      await guildTasks.run(guildId, async () => {
+        const activePlayer = lavalink.getPlayer(guildId);
+        const pendingPlayer = pendingDjStarts.get(guildId)?.player;
+        await cleanupRemovedGuild({
+          ...(activePlayer === undefined ? {} : { activePlayer }),
+          closePlayback: async (player) => {
+            if (djPlayback === undefined) {
+              await player?.destroy("Discord 서버에서 봇이 제거됨");
+              return;
+            }
+            const failures: unknown[] = [];
+            if (player === undefined) {
+              await djPlayback.closeGuild(guildId).catch((error: unknown) => {
+                failures.push(error);
+              });
+            } else {
+              await djPlayback.stop(guildId, player).catch((error: unknown) => {
+                failures.push(error);
+              });
+              // stop 내부 정리 일부가 실패해도 엔진/publisher DELETE를 한 번 더 시도합니다.
+              await djPlayback.closeGuild(guildId, player).catch((error: unknown) => {
+                failures.push(error);
+              });
+            }
+            if (failures.length === 1) throw failures[0];
+            if (failures.length > 1) {
+              throw new AggregateError(failures, "DJ Engine 길드 정리에 실패했습니다.");
+            }
+          },
+          finishPlayerMessage: () => playerMessages.finish(guildId),
+          ...(pendingPlayer === undefined ? {} : { pendingPlayer })
+        });
+      });
+    } finally {
+      // 정리 중 서버 목록이 또 바뀌었을 수 있으므로 완료 시점에도 최신 cache를 보냅니다.
+      await guildRegistry?.trigger();
+    }
+  }
+
   async function handlePlay(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (isDjModeActive(interaction.guildId!)) {
+      await interaction.reply({
+        content: "DJ Engine 자동 믹스가 재생 중입니다. 먼저 `/디제이 종료`를 사용해주세요.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
     const voice = await getVoiceContext(interaction);
     if (!voice.ok) {
       await interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
@@ -423,6 +640,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
     }
 
     const added = await guildTasks.run(guildId, async () => {
+      if (isDjModeActive(guildId)) {
+        throw new Error("DJ Engine 자동 믹스가 재생 중입니다. 먼저 `/디제이 종료`를 사용해주세요.");
+      }
       const latestVoice = await getVoiceContext(interaction);
       if (!latestVoice.ok) {
         throw new Error(latestVoice.message);
@@ -523,6 +743,13 @@ export function createMusicBot(config: AppConfig): MusicBot {
   }
 
   async function handleGenre(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (isDjModeActive(interaction.guildId!)) {
+      await interaction.reply({
+        content: "DJ Engine 자동 믹스가 재생 중입니다. 먼저 `/디제이 종료`를 사용해주세요.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
     const voice = await getVoiceContext(interaction);
     if (!voice.ok) {
       await interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
@@ -569,6 +796,185 @@ export function createMusicBot(config: AppConfig): MusicBot {
     await interaction.editReply(renderGenreDraft(created.draft));
   }
 
+  async function handleDj(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (djPlayback === undefined) {
+      await interaction.reply({
+        content: "DJ Engine이 설정되지 않았습니다. 운영자에게 문의해주세요.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    const subcommand = interaction.options.getSubcommand(true);
+    if (subcommand === "목록") {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const response = await djPlayback.listPlaylists();
+      const playlists = Array.isArray(response) ? response : response.data;
+      if (playlists.length === 0) {
+        await interaction.editReply("DJ Engine에서 사용할 수 있는 플레이리스트가 없습니다.");
+        return;
+      }
+      const visible = playlists.slice(0, 15);
+      const lines = visible.map(
+        ({ id, name }, index) =>
+          `${index + 1}. **${escapeMarkdown(truncate(name, 64))}** · ${formatInlineCode(id)}`
+      );
+      const remaining = playlists.length - visible.length;
+      await interaction.editReply(
+        `DJ Engine 플레이리스트\n${lines.join("\n")}${remaining > 0 ? `\n그 외 ${remaining}개` : ""}\n\nID를 \`/디제이 시작\`의 플레이리스트에 입력하세요.`
+      );
+      return;
+    }
+
+    if (subcommand !== "시작") {
+      if (!isDjModeActive(interaction.guildId!)) {
+        await interaction.reply({
+          content: "현재 실행 중인 DJ 믹스가 없습니다.",
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+      if (
+        subcommand !== "종료" &&
+        pendingDjStarts.has(interaction.guildId!) &&
+        !djPlayback.isActive(interaction.guildId!)
+      ) {
+        await interaction.reply({
+          content: "DJ 믹스를 시작하는 중입니다. 잠시 후 다시 시도하거나 `/디제이 종료`를 사용해주세요.",
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+      switch (subcommand) {
+        case "일시정지":
+          await handlePause(interaction);
+          return;
+        case "계속":
+          await handleResume(interaction);
+          return;
+        case "스킵":
+          await handleSkip(interaction);
+          return;
+        case "종료":
+          await handleStop(interaction);
+          return;
+        default:
+          throw new Error("지원하지 않는 DJ 제어입니다.");
+      }
+    }
+
+    // Discord는 interaction을 약 3초 안에 확인해야 하므로 엔진/음성 네트워크 작업 전에 응답을 예약합니다.
+    await interaction.deferReply();
+    const guildId = interaction.guildId!;
+    if (isDjModeActive(guildId) || lavalink.getPlayer(guildId) !== undefined) {
+      throw new Error("이미 재생 세션이 있습니다. 먼저 재생을 종료해주세요.");
+    }
+    // 네트워크 조회보다 먼저 예약해야 바로 이어진 `/디제이 종료`가 시작 요청을 취소할 수 있습니다.
+    const reservation = pendingDjStarts.reserve(guildId, interaction.user.id);
+    let player: Player | undefined;
+    try {
+      const playlistId = interaction.options.getString("플레이리스트", true);
+      const energyValue = interaction.options.getString("에너지") ?? "build";
+      if (!isDjEnergyProfile(energyValue)) {
+        throw new Error("지원하지 않는 DJ 에너지 흐름입니다.");
+      }
+      const maxDurationMinutes = interaction.options.getInteger("시간") ?? 60;
+      const playlistsResponse = await djPlayback.listPlaylists();
+      if (reservation.cancelled) {
+        throw new Error("DJ Engine 세션 시작이 취소되었습니다.");
+      }
+      const playlists = Array.isArray(playlistsResponse)
+        ? playlistsResponse
+        : playlistsResponse.data;
+      const playlist = playlists.find(({ id }) => id === playlistId);
+      if (playlist === undefined) {
+        throw new Error("DJ Engine 플레이리스트를 찾지 못했습니다. `/디제이 목록`에서 ID를 확인해주세요.");
+      }
+
+      player = await guildTasks.run(guildId, async () => {
+        if (stopping) {
+          throw new Error("봇이 종료 중입니다. 잠시 후 다시 시도해주세요.");
+        }
+        if (reservation.cancelled || pendingDjStarts.get(guildId) !== reservation) {
+          throw new Error("DJ Engine 세션 시작이 취소되었습니다.");
+        }
+        if (lavalink.getPlayer(guildId) !== undefined || djPlayback.isActive(guildId)) {
+          throw new Error("이미 재생 세션이 있습니다. 먼저 재생을 종료해주세요.");
+        }
+        const latestVoice = await getVoiceContext(interaction);
+        if (!latestVoice.ok) {
+          throw new Error(latestVoice.message);
+        }
+        if (reservation.cancelled || pendingDjStarts.get(guildId) !== reservation) {
+          throw new Error("DJ Engine 세션 시작이 취소되었습니다.");
+        }
+        const searchContext = getSearchContext(guildId);
+        const createdPlayer = lavalink.createPlayer({
+          guildId,
+          node: searchContext.node,
+          selfDeaf: true,
+          selfMute: false,
+          textChannelId: interaction.channelId,
+          voiceChannelId: latestVoice.voiceChannelId,
+          volume: states.getOrCreate(guildId).defaultVolume
+        });
+        player = createdPlayer;
+        if (!pendingDjStarts.attachPlayer(reservation, createdPlayer)) {
+          await createdPlayer.destroy("DJ Engine 세션 시작 취소").catch(() => undefined);
+          throw new Error("DJ Engine 세션 시작이 취소되었습니다.");
+        }
+        await createdPlayer.connect();
+        if (
+          reservation.cancelled ||
+          pendingDjStarts.get(guildId) !== reservation ||
+          lavalink.getPlayer(guildId) !== createdPlayer
+        ) {
+          throw new Error("DJ Engine 세션 시작이 취소되었습니다.");
+        }
+        await djPlayback.start({
+          energyProfile: energyValue,
+          guildId,
+          idempotencyKey: `djscord_${guildId}_${interaction.id}`,
+          maxDurationMinutes,
+          ownerRef: `discord:guild:${guildId}`,
+          player: createdPlayer,
+          playlistId,
+          playlistName: playlist.name,
+          requesterId: interaction.user.id
+        });
+
+        const channel = interaction.guild!.channels.cache.get(latestVoice.voiceChannelId);
+        const humanCount =
+          channel?.isVoiceBased() === true
+            ? channel.members.filter((member) => !member.user.bot).size
+            : 0;
+        await applyVoiceOccupancy(createdPlayer, humanCount);
+        await refreshPlayerMessage(createdPlayer, interaction.channelId);
+        return createdPlayer;
+      });
+      const mixUrl = djPlayback.getMixUrl(guildId);
+      await interaction.editReply(
+        `**${escapeMarkdown(truncate(playlist.name, 180))}** DJ 믹스를 시작했습니다. · ${maxDurationMinutes}분 · ${formatDjEnergy(energyValue)}` +
+          (mixUrl === undefined ? "" : `\n믹싱 화면: ${mixUrl}`)
+      );
+    } catch (error) {
+      if (player !== undefined) {
+        await djPlayback.closeGuild(guildId, player).catch(() => undefined);
+        if (lavalink.getPlayer(guildId) === player) {
+          await player.destroy("DJ Engine 세션 시작 실패").catch(() => undefined);
+        }
+      }
+      throw sanitizeDjStartError(error);
+    } finally {
+      const unownedPlayerStillPresent =
+        player !== undefined &&
+        lavalink.getPlayer(guildId) === player &&
+        !djPlayback.ownsPlayer(guildId, player);
+      // destroy가 실패해 고아 player가 남았다면 예약을 tombstone으로 유지해 재사용을 막습니다.
+      if (!unownedPlayerStillPresent) pendingDjStarts.release(reservation);
+    }
+  }
+
   async function handleGenreComponent(
     interaction: ButtonInteraction | StringSelectMenuInteraction
   ): Promise<void> {
@@ -576,6 +982,16 @@ export function createMusicBot(config: AppConfig): MusicBot {
     if (interaction.guildId === null) {
       await interaction.followUp({
         content: "Discord 서버 안에서만 사용할 수 있습니다.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+    if (
+      isDjModeActive(interaction.guildId) &&
+      !isDjInteractionAllowed({ action: interaction.customId, kind: "component" })
+    ) {
+      await interaction.followUp({
+        content: "DJ 믹스 중에는 장르 미리보기 버튼을 사용할 수 없습니다.",
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -648,6 +1064,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
     draft: GenreDraft<GenreDraftContext>
   ): Promise<void> {
     const result = await guildTasks.run(draft.guildId, async () => {
+      if (isDjModeActive(draft.guildId)) {
+        throw new Error("DJ Engine 자동 믹스가 재생 중입니다. 먼저 `/디제이 종료`를 사용해주세요.");
+      }
       const voice = await getVoiceContext(interaction);
       if (!voice.ok) {
         throw new Error(voice.message);
@@ -843,24 +1262,55 @@ export function createMusicBot(config: AppConfig): MusicBot {
   }
 
   async function handlePause(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (djPlayback?.isActive(interaction.guildId!) === true) {
+      await interaction.deferReply();
+    }
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
+    if (djPlayback?.isActive(player.guildId) === true) {
+      if (djPlayback.isPaused(player.guildId)) {
+        await replyCommand(interaction, "이미 일시정지 상태입니다.", true);
+        return;
+      }
+      await guildTasks.run(player.guildId, async () => {
+        await djPlayback.pause(player.guildId, interaction.id);
+        await refreshPlayerMessage(player);
+      });
+      await replyCommand(interaction, "DJ 믹스를 일시정지했습니다.");
+      return;
+    }
     if (player.paused) {
-      await interaction.reply({ content: "이미 일시정지 상태입니다.", flags: MessageFlags.Ephemeral });
+      await replyCommand(interaction, "이미 일시정지 상태입니다.", true);
       return;
     }
     await guildTasks.run(player.guildId, async () => {
       await player.pause();
       await refreshPlayerMessage(player);
     });
-    await interaction.reply("재생을 일시정지했습니다.");
+    await replyCommand(interaction, "재생을 일시정지했습니다.");
   }
 
   async function handleResume(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (djPlayback?.isActive(interaction.guildId!) === true) {
+      await interaction.deferReply();
+    }
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
+    if (djPlayback?.isActive(player.guildId) === true) {
+      if (!djPlayback.isPaused(player.guildId)) {
+        await replyCommand(interaction, "일시정지된 DJ 믹스가 없습니다.", true);
+        return;
+      }
+      await guildTasks.run(player.guildId, async () => {
+        idleTimers.cancel(player.guildId);
+        await djPlayback.resume(player.guildId, interaction.id);
+        await refreshPlayerMessage(player);
+      });
+      await replyCommand(interaction, "DJ 믹스를 계속합니다.");
+      return;
+    }
     if (!player.paused) {
-      await interaction.reply({ content: "일시정지된 곡이 없습니다.", flags: MessageFlags.Ephemeral });
+      await replyCommand(interaction, "일시정지된 곡이 없습니다.", true);
       return;
     }
     await guildTasks.run(player.guildId, async () => {
@@ -869,22 +1319,30 @@ export function createMusicBot(config: AppConfig): MusicBot {
       await player.resume();
       await refreshPlayerMessage(player);
     });
-    await interaction.reply("재생을 계속합니다.");
+    await replyCommand(interaction, "재생을 계속합니다.");
   }
 
   async function handleSkip(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (djPlayback?.isActive(interaction.guildId!) === true) {
+      await interaction.deferReply();
+    }
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
     await guildTasks.run(player.guildId, async () => {
-      await player.skip(0, false);
+      if (djPlayback?.isActive(player.guildId) === true) {
+        await djPlayback.skip(player.guildId, interaction.id);
+      } else {
+        await player.skip(0, false);
+      }
       await refreshPlayerMessage(player);
     });
-    await interaction.reply("현재 곡을 건너뛰었습니다.");
+    await replyCommand(interaction, "현재 곡을 건너뛰었습니다.");
   }
 
   async function handleRepeat(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
+    if (await rejectUnsupportedDjControl(interaction, player, "반복")) return;
     const mode = interaction.options.getString("모드", true);
     if (!isPlaybackRepeatMode(mode)) {
       throw new Error("지원하지 않는 반복 모드입니다.");
@@ -899,6 +1357,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
   async function handleShuffle(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
+    if (await rejectUnsupportedDjControl(interaction, player, "셔플")) return;
     if (player.queue.tracks.length < 2) {
       await interaction.reply({
         content: "순서를 섞으려면 대기열에 다음 곡이 2곡 이상 있어야 합니다.",
@@ -916,6 +1375,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
   async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
+    if (await rejectUnsupportedDjControl(interaction, player, "대기열 삭제")) return;
     const position = interaction.options.getInteger("번호", true);
     await guildTasks.run(player.guildId, async () => {
       await removeQueuedTrack(player.queue, position);
@@ -927,6 +1387,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
   async function handleMove(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
+    if (await rejectUnsupportedDjControl(interaction, player, "대기열 이동")) return;
     const fromPosition = interaction.options.getInteger("곡", true);
     const toPosition = interaction.options.getInteger("위치", true);
     await guildTasks.run(player.guildId, async () => {
@@ -939,6 +1400,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
   async function handleSeek(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = await requireControllablePlayer(interaction);
     if (player === undefined || player.queue.current === null) return;
+    if (await rejectUnsupportedDjControl(interaction, player, "탐색")) return;
     const positionMs = validateSeekPosition(
       fromLavalinkTrack(player.queue.current),
       parseSeekPosition(interaction.options.getString("시간", true))
@@ -951,6 +1413,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
   }
 
   async function handleVolume(interaction: ChatInputCommandInteraction): Promise<void> {
+    await interaction.deferReply();
     const player = await requireControllablePlayer(interaction);
     if (player === undefined) return;
     const volume = interaction.options.getInteger("값", true);
@@ -958,13 +1421,19 @@ export function createMusicBot(config: AppConfig): MusicBot {
       await player.setVolume(volume);
       await refreshPlayerMessage(player);
     });
-    await interaction.reply(`볼륨을 **${volume}%**로 설정했습니다.`);
+    await replyCommand(interaction, `볼륨을 **${volume}%**로 설정했습니다.`);
   }
 
   async function handleQueue(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = lavalink.getPlayer(interaction.guildId!);
     if (player === undefined) {
       await interaction.reply("현재 재생 중인 곡이 없습니다.");
+      return;
+    }
+    if (isDjEnginePlayer(player)) {
+      await interaction.reply(
+        formatQueue(djPlayback?.getDisplayTrack(interaction.guildId!) ?? createSafeDjTrack(), [])
+      );
       return;
     }
     const current = player.queue.current === null ? null : fromLavalinkTrack(player.queue.current);
@@ -981,8 +1450,16 @@ export function createMusicBot(config: AppConfig): MusicBot {
       return;
     }
     const guildId = interaction.guildId!;
+    const existingPlayer = lavalink.getPlayer(guildId);
+    if (
+      existingPlayer !== undefined &&
+      await rejectUnsupportedDjControl(interaction, existingPlayer, "자동재생")
+    ) return;
     const enabled = interaction.options.getString("모드", true) === "on";
     await guildTasks.run(guildId, async () => {
+      if (isDjModeActive(guildId)) {
+        throw new Error("DJ Engine 자동 믹스에서는 자동재생을 사용할 수 없습니다.");
+      }
       states.getOrCreate(guildId).autoplayEnabled = enabled;
       if (enabled) {
         autoplayFailures.delete(guildId);
@@ -996,25 +1473,64 @@ export function createMusicBot(config: AppConfig): MusicBot {
   }
 
   async function handleStop(interaction: ChatInputCommandInteraction): Promise<void> {
-    const voice = await getVoiceContext(interaction);
-    if (!voice.ok) {
-      await interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
+    const guildId = interaction.guildId!;
+    const djActive = isDjModeActive(guildId);
+    if (djActive) {
+      await interaction.deferReply();
+    }
+    const pendingStart = pendingDjStarts.get(guildId);
+    const player = pendingStart === undefined
+      ? lavalink.getPlayer(guildId)
+      : pendingStart.player;
+    if (djActive && djPlayback !== undefined) {
+      if (pendingStart !== undefined && player === undefined) {
+        if (pendingStart.requesterId !== interaction.user.id) {
+          await replyCommand(
+            interaction,
+            "음성 채널을 확인하기 전에는 DJ 시작을 요청한 사용자만 취소할 수 있습니다.",
+            true
+          );
+          return;
+        }
+        pendingDjStarts.cancel(guildId);
+        await replyCommand(interaction, "DJ 믹스 시작 요청을 취소했습니다.");
+        return;
+      }
+      const membership = await getVoiceMembership(interaction, player?.voiceChannelId ?? null);
+      if (!membership.ok) {
+        await replyCommand(interaction, membership.message, true);
+        return;
+      }
+      pendingDjStarts.cancel(guildId);
+      if (player === undefined) {
+        await djPlayback.closeGuild(guildId);
+      } else {
+        await djPlayback.stop(guildId, player);
+      }
+      await playerMessages.finish(guildId);
+      await replyCommand(interaction, "DJ 믹스를 종료하고 음성 채널에서 나왔습니다.");
       return;
     }
-    const player = lavalink.getPlayer(interaction.guildId!);
+
+    const voice = await getVoiceContext(interaction);
+    if (!voice.ok) {
+      await replyCommand(interaction, voice.message, true);
+      return;
+    }
     if (player === undefined) {
-      await interaction.reply({
-        content: "현재 재생 세션이 없습니다.",
-        flags: MessageFlags.Ephemeral
-      });
+      await replyCommand(interaction, "현재 재생 세션이 없습니다.", true);
       return;
     }
     await guildTasks.run(player.guildId, async () => {
-      await player.stopPlaying(true, false);
-      await player.destroy("사용자가 정지 명령 실행");
+      if (djPlayback?.isActive(player.guildId) === true) {
+        await djPlayback.stop(player.guildId, player);
+      } else {
+        await player.stopPlaying(true, false);
+        await player.destroy("사용자가 정지 명령 실행");
+      }
       await playerMessages.finish(player.guildId);
     });
-    await interaction.reply("재생을 종료하고 음성 채널에서 나왔습니다.");
+    await replyCommand(interaction, "재생을 종료하고 음성 채널에서 나왔습니다.");
   }
 
   async function handleSettings(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1063,6 +1579,7 @@ export function createMusicBot(config: AppConfig): MusicBot {
       });
       return;
     }
+    if (await rejectUnsupportedDjControl(interaction, player, "좋아요")) return;
     const track = fromLavalinkTrack(player.queue.current);
     const added = repository.addFavorite(interaction.user.id, track);
     await interaction.reply({
@@ -1095,7 +1612,23 @@ export function createMusicBot(config: AppConfig): MusicBot {
   }
 
   async function handlePlaylist(interaction: ChatInputCommandInteraction): Promise<void> {
-    switch (interaction.options.getSubcommand(true)) {
+    const currentPlayer = lavalink.getPlayer(interaction.guildId!);
+    const subcommand = interaction.options.getSubcommand(true);
+    if (
+      (subcommand === "저장" || subcommand === "재생") &&
+      currentPlayer !== undefined &&
+      isDjEnginePlayer(currentPlayer)
+    ) {
+      await interaction.reply({
+        content:
+          subcommand === "저장"
+            ? "DJ Engine 자동 믹스는 플레이리스트에 저장할 수 없습니다."
+            : "DJ Engine 자동 믹스가 재생 중입니다. 먼저 `/디제이 종료`를 사용해주세요.",
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+    switch (subcommand) {
       case "저장":
         await saveCurrentPlaylist(interaction);
         return;
@@ -1210,6 +1743,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
       interaction.user.id
     );
     const result = await guildTasks.run(guildId, async () => {
+      if (isDjModeActive(guildId)) {
+        throw new Error("DJ Engine 자동 믹스가 재생 중입니다. 먼저 `/디제이 종료`를 사용해주세요.");
+      }
       const latestVoice = await getVoiceContext(interaction);
       if (!latestVoice.ok) throw new Error(latestVoice.message);
       const currentPlayer = lavalink.getPlayer(guildId);
@@ -1267,6 +1803,16 @@ export function createMusicBot(config: AppConfig): MusicBot {
       return;
     }
 
+    if (
+      isDjModeActive(interaction.guildId) &&
+      !isDjInteractionAllowed({ action: parsed.action, kind: "component" })
+    ) {
+      await interaction.editReply(
+        "DJ 믹스 중에는 플레이어 버튼을 사용할 수 없습니다. `/디제이` 명령으로 제어해주세요."
+      );
+      return;
+    }
+
     if (parsed.action === "queue") {
       const player = lavalink.getPlayer(interaction.guildId);
       await interaction.editReply(formatPlayerQueue(player));
@@ -1303,7 +1849,16 @@ export function createMusicBot(config: AppConfig): MusicBot {
           if (player.queue.current === null) {
             throw new Error("현재 재생 중인 곡이 없습니다.");
           }
-          if (player.paused) {
+          if (isDjEnginePlayer(player)) {
+            if (djPlayback === undefined || !djPlayback.isActive(player.guildId)) {
+              throw new Error("DJ Engine 세션을 정리하고 있습니다.");
+            }
+            if (djPlayback.isPaused(player.guildId)) {
+              await djPlayback.resume(player.guildId, randomUUID());
+            } else {
+              await djPlayback.pause(player.guildId, randomUUID());
+            }
+          } else if (player.paused) {
             pausedForEmptyChannel.delete(player.guildId);
             idleTimers.cancel(player.guildId);
             await player.resume();
@@ -1316,15 +1871,29 @@ export function createMusicBot(config: AppConfig): MusicBot {
           if (player.queue.current === null) {
             throw new Error("현재 재생 중인 곡이 없습니다.");
           }
-          await player.skip(0, false);
+          if (isDjEnginePlayer(player)) {
+            if (djPlayback === undefined || !djPlayback.isActive(player.guildId)) {
+              throw new Error("DJ Engine 세션을 정리하고 있습니다.");
+            }
+            await djPlayback.skip(player.guildId, randomUUID());
+          } else {
+            await player.skip(0, false);
+          }
           await refreshPlayerMessage(player);
           break;
         case "stop":
-          await player.stopPlaying(true, false);
-          await player.destroy("사용자가 플레이어 정지 버튼 실행");
+          if (djPlayback?.isActive(player.guildId) === true) {
+            await djPlayback.stop(player.guildId, player);
+          } else {
+            await player.stopPlaying(true, false);
+            await player.destroy("사용자가 플레이어 정지 버튼 실행");
+          }
           await playerMessages.finish(player.guildId);
           break;
         case "autoplay": {
+          if (isDjEnginePlayer(player)) {
+            throw new Error("DJ Engine 자동 믹스에서는 자동재생을 사용할 수 없습니다.");
+          }
           const state = states.getOrCreate(player.guildId);
           state.autoplayEnabled = !state.autoplayEnabled;
           if (state.autoplayEnabled) {
@@ -1335,6 +1904,9 @@ export function createMusicBot(config: AppConfig): MusicBot {
         }
         case "like":
         case "dislike": {
+          if (isDjEnginePlayer(player)) {
+            throw new Error("DJ Engine 자동 믹스에서는 추천 피드백을 사용할 수 없습니다.");
+          }
           if (player.queue.current === null) {
             throw new Error("현재 재생 중인 곡이 없습니다.");
           }
@@ -1371,17 +1943,28 @@ export function createMusicBot(config: AppConfig): MusicBot {
     const player = lavalink.getPlayer(interaction.guildId!);
     const voice = await getVoiceContext(interaction);
     if (!voice.ok) {
-      await interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
+      await replyCommand(interaction, voice.message, true);
       return undefined;
     }
     if (player === undefined || player.queue.current === null) {
-      await interaction.reply({
-        content: "현재 재생 중인 곡이 없습니다.",
-        flags: MessageFlags.Ephemeral
-      });
+      await replyCommand(interaction, "현재 재생 중인 곡이 없습니다.", true);
       return undefined;
     }
     return player;
+  }
+
+  async function replyCommand(
+    interaction: ChatInputCommandInteraction,
+    content: string,
+    ephemeral = false
+  ): Promise<void> {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(content);
+      return;
+    }
+    await interaction.reply(
+      ephemeral ? { content, flags: MessageFlags.Ephemeral } : { content }
+    );
   }
 
   async function getVoiceContext(
@@ -1396,6 +1979,17 @@ export function createMusicBot(config: AppConfig): MusicBot {
       botCanSpeak: permissions.canSpeak,
       memberChannelId: voiceChannel?.id ?? null,
       playerChannelId: player?.voiceChannelId ?? null
+    });
+  }
+
+  async function getVoiceMembership(
+    interaction: ChatInputCommandInteraction,
+    playerChannelId: string | null
+  ) {
+    const member = await interaction.guild!.members.fetch(interaction.user.id);
+    return validateVoiceMembership({
+      memberChannelId: member.voice.channelId,
+      playerChannelId
     });
   }
 
@@ -1430,23 +2024,33 @@ export function createMusicBot(config: AppConfig): MusicBot {
     if (player === undefined) {
       return undefined;
     }
+    const djTrack =
+      djPlayback?.getDisplayTrack(guildId) ??
+      (isDjEnginePlayer(player) ? createSafeDjTrack() : undefined);
     const current =
-      player.queue.current === null ? null : fromLavalinkTrack(player.queue.current);
-    const nextRaw = player.queue.tracks.find((track) => !("resolve" in track));
+      djTrack ?? (player.queue.current === null ? null : fromLavalinkTrack(player.queue.current));
+    const nextRaw = player.queue.tracks.find(
+      (track) => !("resolve" in track) && !isDjEngineRawTrack(track)
+    );
     const next =
       nextRaw === undefined || "resolve" in nextRaw ? null : fromLavalinkTrack(nextRaw);
     return {
-      autoplayEnabled: states.getOrCreate(guildId).autoplayEnabled,
+      autoplayEnabled: djTrack === undefined && states.getOrCreate(guildId).autoplayEnabled,
       current,
       feedback:
-        current === null
+        current === null || djTrack !== undefined
           ? null
           : (repository.getRecommendationFeedback(guildId, current.identifier) ?? null),
       next,
       positionMs: player.position,
       queueSize: player.queue.tracks.length,
       repeatMode: player.repeatMode,
-      status: current === null ? "idle" : player.paused ? "paused" : "playing",
+      status:
+        current === null
+          ? "idle"
+          : djPlayback?.isPaused(guildId) === true || player.paused
+            ? "paused"
+            : "playing",
       updatedAt: new Date(),
       volume: player.volume,
       voiceChannelId: player.voiceChannelId
@@ -1467,10 +2071,13 @@ export function createMusicBot(config: AppConfig): MusicBot {
     if (player === undefined) {
       return "현재 재생 중인 곡이 없습니다.";
     }
+    const djTrack =
+      djPlayback?.getDisplayTrack(player.guildId) ??
+      (isDjEnginePlayer(player) ? createSafeDjTrack() : undefined);
     const current =
-      player.queue.current === null ? null : fromLavalinkTrack(player.queue.current);
+      djTrack ?? (player.queue.current === null ? null : fromLavalinkTrack(player.queue.current));
     const upcoming = player.queue.tracks.flatMap((track) =>
-      "resolve" in track ? [] : [fromLavalinkTrack(track)]
+      "resolve" in track || isDjEngineRawTrack(track) ? [] : [fromLavalinkTrack(track)]
     );
     return formatQueue(current, upcoming);
   }
@@ -1505,22 +2112,35 @@ export function createMusicBot(config: AppConfig): MusicBot {
       if (lavalink.getPlayer(player.guildId) !== player) {
         return;
       }
-      if (humanCount === 0) {
-        if (player.playing) {
-          await player.pause();
+      await applyVoiceOccupancy(player, humanCount);
+    });
+  }
+
+  async function applyVoiceOccupancy(player: Player, humanCount: number): Promise<void> {
+    if (humanCount === 0) {
+      if (djPlayback?.isActive(player.guildId) === true) {
+        if (!djPlayback.isPaused(player.guildId)) {
+          await djPlayback.pause(player.guildId, randomUUID());
           pausedForEmptyChannel.add(player.guildId);
         }
-        schedulePlayerDestroy(player);
-        await refreshPlayerMessage(player);
-        return;
+      } else if (player.playing) {
+        await player.pause();
+        pausedForEmptyChannel.add(player.guildId);
       }
+      schedulePlayerDestroy(player);
+      await refreshPlayerMessage(player);
+      return;
+    }
 
-      idleTimers.cancel(player.guildId);
-      if (pausedForEmptyChannel.delete(player.guildId) && player.paused) {
+    idleTimers.cancel(player.guildId);
+    if (pausedForEmptyChannel.delete(player.guildId)) {
+      if (djPlayback?.isActive(player.guildId) === true) {
+        await djPlayback.resume(player.guildId, randomUUID());
+      } else if (player.paused) {
         await player.resume();
       }
-      await refreshPlayerMessage(player);
-    });
+    }
+    await refreshPlayerMessage(player);
   }
 
   async function sendToPlayerChannel(player: Player, content: string): Promise<void> {
@@ -1533,10 +2153,63 @@ export function createMusicBot(config: AppConfig): MusicBot {
     }
   }
 
+  async function cleanupDjPlayer(player: Player, reason: string): Promise<void> {
+    await guildTasks.run(player.guildId, async () => {
+      const current = lavalink.getPlayer(player.guildId);
+      if (current !== undefined && current !== player) return;
+      if (!isDjEnginePlayer(player)) return;
+      try {
+        await player.stopPlaying(true, false);
+      } catch {
+        // Player destroy와 엔진 DELETE는 계속 시도합니다.
+      }
+      await player.destroy(reason).catch(() => undefined);
+      await djPlayback?.closeGuild(player.guildId, player).catch((error: unknown) => {
+        console.error(`DJ Engine 세션 정리에 실패했습니다: guild=${player.guildId}`, error);
+      });
+      await playerMessages.finish(player.guildId);
+    });
+  }
+
+  function cleanupDjPlayerInBackground(player: Player, reason: string): void {
+    void cleanupDjPlayer(player, reason).catch((error: unknown) => {
+      if (!stopping) {
+        console.error(`DJ Engine 플레이어 자동 정리에 실패했습니다: guild=${player.guildId}`, error);
+      }
+    });
+  }
+
+  async function rejectUnsupportedDjControl(
+    interaction: ChatInputCommandInteraction,
+    player: Player,
+    control: string
+  ): Promise<boolean> {
+    if (!isDjEnginePlayer(player)) return false;
+    await interaction.reply({
+      content: `DJ Engine 자동 믹스에서는 ${control} 기능을 사용할 수 없습니다.`,
+      flags: MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
+  function isDjEnginePlayer(player: Player): boolean {
+    if (pendingDjStarts.get(player.guildId)?.player === player) return true;
+    if (djPlayback?.ownsPlayer(player.guildId, player) === true) return true;
+    if (isDjEngineRawTrack(player.queue.current)) return true;
+    return player.queue.tracks.some((track) => isDjEngineRawTrack(track));
+  }
+
+  function isDjModeActive(guildId: string): boolean {
+    return pendingDjStarts.has(guildId) || djPlayback?.isActive(guildId) === true;
+  }
+
   return {
     client,
     lavalink,
     async start() {
+      if (stopping) {
+        throw new Error("종료가 시작된 봇은 다시 시작할 수 없습니다.");
+      }
       healthHeartbeat.start();
       try {
         await client.login(config.DISCORD_TOKEN);
@@ -1545,10 +2218,43 @@ export function createMusicBot(config: AppConfig): MusicBot {
         throw error;
       }
     },
-    stop() {
-      healthHeartbeat.stop();
-      client.destroy();
-      repository.close();
+    async stop() {
+      if (stopPromise !== undefined) return stopPromise;
+      stopping = true;
+      stopPromise = (async () => {
+        healthHeartbeat.stop();
+        await guildRegistry?.stop();
+        client.destroy();
+        idleTimers.cancelAll();
+        for (const timeout of genreDraftTimeouts.values()) clearTimeout(timeout);
+        genreDraftTimeouts.clear();
+        const pendingStops = pendingDjStarts.values().map(async (reservation) => {
+          pendingDjStarts.cancel(reservation.guildId);
+          await reservation.player
+            ?.destroy("봇 종료 중인 DJ Engine 연결 취소")
+            .catch(() => undefined);
+        });
+        const guildTaskDrain = guildTasks.close();
+
+        const errors: unknown[] = [];
+        await Promise.allSettled(pendingStops);
+        await djPlayback?.closeAll().catch((error: unknown) => errors.push(error));
+        await guildTaskDrain.catch((error: unknown) => errors.push(error));
+        await mixPublisher?.stopAll().catch((error: unknown) => errors.push(error));
+        const hasConnectedNode = [...lavalink.nodeManager.nodes.values()].some(
+          (node) => node.connected
+        );
+        if (hasConnectedNode) {
+          await lavalink.nodeManager
+            .disconnectAll(true, true)
+            .catch((error: unknown) => errors.push(error));
+        }
+        repository.close();
+        if (errors.length > 0) {
+          throw new AggregateError(errors, "봇 종료 중 일부 리소스를 정리하지 못했습니다.");
+        }
+      })();
+      return stopPromise;
     }
   };
 }
@@ -1570,6 +2276,31 @@ function manualQueueLength(player: Player): number {
     }
     return count + (fromLavalinkTrack(track).origin === "recommended" ? 0 : 1);
   }, 0);
+}
+
+function isDjEngineRawTrack(track: unknown): boolean {
+  if (typeof track !== "object" || track === null || !("userData" in track)) return false;
+  const userData = track.userData;
+  return (
+    typeof userData === "object" &&
+    userData !== null &&
+    "djengine" in userData &&
+    userData.djengine === 1
+  );
+}
+
+function createSafeDjTrack(): MusicTrack {
+  return {
+    author: "DJ Engine",
+    durationMs: 0,
+    identifier: "djengine:closing",
+    isSeekable: false,
+    isStream: true,
+    origin: "requested",
+    sourceName: "djengine",
+    title: "DJ Engine 자동 믹스",
+    uri: "https://djengine.local/session"
+  };
 }
 
 function isPlaybackRepeatMode(value: string): value is PlaybackRepeatMode {
@@ -1643,6 +2374,32 @@ function formatInlineCode(value: string): string {
   return `\`${value.trim().replaceAll("`", "'")}\``;
 }
 
+function escapeMarkdown(value: string): string {
+  return value.replaceAll(/([\\*_~|`>])/gu, "\\$1");
+}
+
+function isDjEnergyProfile(value: string): value is DjEnergyProfile {
+  return ["flat", "warmup", "build", "peak", "cooldown"].includes(value);
+}
+
+function formatDjEnergy(value: DjEnergyProfile): string {
+  const labels: Record<DjEnergyProfile, string> = {
+    build: "빌드업",
+    cooldown: "쿨다운",
+    flat: "일정하게",
+    peak: "피크",
+    warmup: "워밍업"
+  };
+  return labels[value];
+}
+
+function sanitizeDjStartError(error: unknown): Error {
+  if (error instanceof Error && !/https?:\/\//u.test(error.message) && !/token=/iu.test(error.message)) {
+    return error;
+  }
+  return new Error("DJ Engine 스트림을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
+}
+
 async function respondWithError(
   interaction: ChatInputCommandInteraction,
   error: unknown
@@ -1678,4 +2435,20 @@ function formatMilliseconds(durationMs: number): string {
 
 function truncate(value: string, maximumLength: number): string {
   return value.length <= maximumLength ? value : `${value.slice(0, maximumLength - 1)}…`;
+}
+
+function resolveBefore<T>(operation: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(undefined), timeoutMs);
+    void operation.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timeout);
+        resolve(undefined);
+      }
+    );
+  });
 }

@@ -39,6 +39,7 @@ export function buildPlayerCard(
   options: PlayerCardOptions = {}
 ): PlayerCardPayload {
   const ended = snapshot.status === "ended";
+  const djMode = snapshot.current?.sourceName === "djengine";
   const embed = ended ? buildEndedEmbed(snapshot) : buildActiveEmbed(snapshot);
   const pauseStyle = snapshot.status === "paused" ? ButtonStyle.Success : ButtonStyle.Primary;
   const playbackDisabled = ended || snapshot.current === null || snapshot.status === "idle";
@@ -48,27 +49,27 @@ export function buildPlayerCard(
       .setCustomId(`music:${sessionId}:toggle`)
       .setEmoji(snapshot.status === "paused" ? "▶️" : "⏸️")
       .setStyle(pauseStyle)
-      .setDisabled(playbackDisabled),
+      .setDisabled(playbackDisabled || djMode),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:skip`)
       .setEmoji("⏭️")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(playbackDisabled),
+      .setDisabled(playbackDisabled || djMode),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:stop`)
       .setEmoji("⏹️")
       .setStyle(ButtonStyle.Danger)
-      .setDisabled(ended),
+      .setDisabled(ended || djMode),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:refresh`)
       .setEmoji("🔄")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(ended),
+      .setDisabled(ended || djMode),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:autoplay`)
       .setEmoji("✨")
       .setStyle(snapshot.autoplayEnabled ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setDisabled(ended)
+      .setDisabled(ended || djMode)
   );
   const secondRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -76,17 +77,17 @@ export function buildPlayerCard(
       .setEmoji("📋")
       .setLabel("대기열")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(ended),
+      .setDisabled(ended || djMode),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:like`)
       .setEmoji("👍")
       .setStyle(snapshot.feedback === "like" ? ButtonStyle.Success : ButtonStyle.Secondary)
-      .setDisabled(playbackDisabled),
+      .setDisabled(playbackDisabled || djMode),
     new ButtonBuilder()
       .setCustomId(`music:${sessionId}:dislike`)
       .setEmoji("👎")
       .setStyle(snapshot.feedback === "dislike" ? ButtonStyle.Danger : ButtonStyle.Secondary)
-      .setDisabled(playbackDisabled)
+      .setDisabled(playbackDisabled || djMode)
   );
   if (options.supportUrl !== undefined) {
     secondRow.addComponents(
@@ -95,7 +96,7 @@ export function buildPlayerCard(
         .setEmoji("☕")
         .setLabel("서버비 지원")
         .setStyle(ButtonStyle.Link)
-        .setDisabled(ended)
+        .setDisabled(ended || djMode)
     );
   }
 
@@ -130,7 +131,6 @@ function buildActiveEmbed(snapshot: PlayerCardSnapshot): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(snapshot.status === "paused" ? 0xf59e0b : 0x2f80ed)
     .setTitle(current.title)
-    .setURL(current.uri)
     .setAuthor({ name: `💿 ${current.author}` })
     .setDescription(formatProgress(current, snapshot.positionMs, snapshot.status))
     .addFields(
@@ -152,6 +152,10 @@ function buildActiveEmbed(snapshot: PlayerCardSnapshot): EmbedBuilder {
     )
     .setFooter({ text: formatPlayerFooter(snapshot) })
     .setTimestamp(snapshot.updatedAt);
+
+  if (current.sourceName !== "djengine") {
+    embed.setURL(current.uri);
+  }
 
   if (current.artworkUrl !== undefined && current.artworkUrl !== null) {
     embed.setThumbnail(current.artworkUrl);

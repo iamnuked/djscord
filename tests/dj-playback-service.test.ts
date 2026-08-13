@@ -42,7 +42,7 @@ function rawDjTrack(uri = AUDIO_URL): Track {
       isSeekable: false,
       isStream: true,
       isrc: null,
-      sourceName: "http",
+      sourceName: "youtube",
       title: "Unknown title",
       uri
     },
@@ -63,9 +63,19 @@ function searchResult(tracks: Track[]): SearchResult {
 
 function createEngine() {
   const created = session();
+  const ready = {
+    createdAt: created.createdAt,
+    currentTrackId: created.currentTrackId,
+    id: created.id,
+    ownerRef: created.ownerRef,
+    playlistId: created.playlistId,
+    status: "ready" as const
+  };
   return {
-    closeSession: vi.fn(async (_sessionId: string) => undefined),
-    createSession: vi.fn(async (_input: unknown) => created),
+    closeSession: vi.fn<(_sessionId: string) => Promise<void>>().mockResolvedValue(undefined),
+    createSession: vi
+      .fn<(_input: unknown) => Promise<TestSession>>()
+      .mockResolvedValue(created),
     listPlaylists: vi.fn(async () => ({
       data: [{ id: "playlist-1", name: "Friday Mix", path: "ROOT/Friday Mix" }],
       meta: { hasNext: false, nextCursor: null }
@@ -78,27 +88,35 @@ function createEngine() {
         quantize: "immediate" | "next_beat" | "next_bar" | "next_phrase" = "next_bar"
       ) => ({ commandId, quantize, scheduledSample: 0, ...command })
     ),
-    waitUntilReady: vi.fn(async (_sessionId: string) => ({
-      ...created,
-      audioUrl: undefined,
-      energyProfile: undefined,
-      status: "ready" as const
-    }))
+    waitUntilReady: vi
+      .fn<(
+        _sessionId: string,
+        _options?: { signal?: AbortSignal; timeoutMs?: number }
+      ) => Promise<typeof ready>>()
+      .mockResolvedValue(ready)
   };
 }
 
 function createPlayer(track = rawDjTrack()) {
   return {
-    destroy: vi.fn(async (_reason: string) => undefined),
+    destroy: vi.fn<(_reason: string) => Promise<void>>().mockResolvedValue(undefined),
     pause: vi.fn(async () => undefined),
-    play: vi.fn(async () => undefined),
-    queue: { add: vi.fn(async (_track: Track) => undefined) },
+    play: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    queue: {
+      add: vi.fn<(_track: Track) => Promise<void>>().mockResolvedValue(undefined)
+    },
     resume: vi.fn(async () => undefined),
-    search: vi.fn(async (_query: string, _requester: { id: string }, _throwOnEmpty?: boolean) =>
-      searchResult([track])
-    ),
+    search: vi
+      .fn<(
+        _query: string,
+        _requester: { id: string },
+        _throwOnEmpty?: boolean
+      ) => Promise<SearchResult>>()
+      .mockResolvedValue(searchResult([track])),
     skip: vi.fn(async () => undefined),
-    stopPlaying: vi.fn(async (_clearQueue?: boolean, _executeAutoplay?: boolean) => undefined)
+    stopPlaying: vi
+      .fn<(_clearQueue?: boolean, _executeAutoplay?: boolean) => Promise<void>>()
+      .mockResolvedValue(undefined)
   };
 }
 
@@ -108,7 +126,7 @@ function startInput(player: ReturnType<typeof createPlayer>, guildId = "guild-1"
     guildId,
     idempotencyKey: `attempt-${guildId}`,
     maxDurationMinutes: 45,
-    ownerRef: guildId,
+    ownerRef: `discord:guild:${guildId}`,
     player,
     playlistId: "playlist-1",
     playlistName: "Friday Mix",
@@ -141,10 +159,12 @@ describe("DjPlaybackService", () => {
       energyProfile: "peak",
       idempotencyKey: "attempt-guild-1",
       maxDurationMinutes: 45,
-      ownerRef: "guild-1",
+      ownerRef: "discord:guild:guild-1",
       playlistId: "playlist-1"
     });
-    expect(engine.waitUntilReady).toHaveBeenCalledWith("session-1");
+    expect(engine.waitUntilReady).toHaveBeenCalledWith("session-1", {
+      signal: expect.any(Object)
+    });
     expect(player.search.mock.calls[0]?.slice(0, 2)).toEqual([
       AUDIO_URL,
       { id: "user-1" }
@@ -193,7 +213,73 @@ describe("DjPlaybackService", () => {
     expect(JSON.stringify(displayTrack)).not.toContain("token=");
   });
 
-  it("일시정지, 계속, 스킵은 Lavalink가 아니라 DJ Engine 내부 믹스에 명령한다", async () => {
+  it("Lavalink 재생 뒤 mix publisher를 시작하고 세션 정리와 함께 cleanup한다", async () => {
+    const engine = createEngine();
+    const player = createPlayer();
+    const publisher = {
+      getMixUrl: vi.fn(() => "https://djscord.example/mix?guild=guild-1"),
+      start: vi.fn(),
+      stop: vi.fn(async () => undefined)
+    };
+    const service = new DjPlaybackService(engine, publisher);
+
+    await service.start(startInput(player));
+
+    expect(publisher.start).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      ownerRef: "discord:guild:guild-1",
+      playlist: { id: "playlist-1", name: "Friday Mix" },
+      sessionId: "session-1"
+    });
+    expect(player.play.mock.invocationCallOrder[0]).toBeLessThan(
+      publisher.start.mock.invocationCallOrder[0]!
+    );
+    expect(service.getMixUrl("guild-1")).toBe(
+      "https://djscord.example/mix?guild=guild-1"
+    );
+
+    await service.closeGuild("guild-1", player);
+
+    expect(publisher.stop).toHaveBeenCalledOnce();
+    expect(publisher.stop).toHaveBeenCalledWith("guild-1");
+  });
+
+  it("선택적인 mix cleanup 실패가 엔진 종료나 다음 DJ 시작을 막지 않는다", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const engine = createEngine();
+    const firstPlayer = createPlayer();
+    const publisher = {
+      getMixUrl: vi.fn(() => "https://djscord.example/mix?guild=guild-1"),
+      start: vi.fn(),
+      stop: vi.fn().mockRejectedValue(new Error("ingest unavailable"))
+    };
+    const service = new DjPlaybackService(engine, publisher);
+    await service.start(startInput(firstPlayer));
+
+    await expect(service.closeGuild("guild-1", firstPlayer)).resolves.toBeUndefined();
+
+    expect(engine.closeSession).toHaveBeenCalledWith("session-1");
+    expect(service.isActive("guild-1")).toBe(false);
+    engine.createSession.mockResolvedValueOnce(session());
+    await expect(service.start(startInput(createPlayer()))).resolves.toBeDefined();
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("mix publisher"));
+    errorLog.mockRestore();
+  });
+
+  it("Discord 표시용 플레이리스트 제목은 embed 제한보다 짧게 자른다", async () => {
+    const engine = createEngine();
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine);
+
+    await service.start({
+      ...startInput(player),
+      playlistName: "🎵".repeat(300)
+    });
+
+    expect([...(service.getDisplayTrack("guild-1")?.title ?? "")]).toHaveLength(240);
+  });
+
+  it("일시정지, 계속, 스킵은 next_bar로 DJ Engine 내부 믹스에 명령한다", async () => {
     const engine = createEngine();
     const player = createPlayer();
     const service = new DjPlaybackService(engine);
@@ -205,13 +291,27 @@ describe("DjPlaybackService", () => {
     await service.skip("guild-1", "skip-1");
 
     expect(engine.sendCommand.mock.calls).toEqual([
-      ["session-1", "pause-1", { type: "pause" }, "immediate"],
-      ["session-1", "resume-1", { type: "play" }, "immediate"],
-      ["session-1", "skip-1", { type: "skip" }, "immediate"]
+      ["session-1", "pause-1", { type: "pause" }, "next_bar"],
+      ["session-1", "resume-1", { type: "play" }, "next_bar"],
+      ["session-1", "skip-1", { type: "skip" }, "next_bar"]
     ]);
     expect(player.pause).not.toHaveBeenCalled();
     expect(player.resume).not.toHaveBeenCalled();
     expect(player.skip).not.toHaveBeenCalled();
+  });
+
+  it("엔진 제어 명령이 실패하면 일시정지 표시 상태를 바꾸지 않는다", async () => {
+    const engine = createEngine();
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine);
+    await service.start(startInput(player));
+    engine.sendCommand.mockRejectedValueOnce(new Error("engine unavailable"));
+
+    await expect(service.pause("guild-1", "pause-failed")).rejects.toThrow(
+      "engine unavailable"
+    );
+
+    expect(service.isPaused("guild-1")).toBe(false);
   });
 
   it("세션 준비 실패 시 생성된 세션을 닫고 활성 상태를 남기지 않는다", async () => {
@@ -262,8 +362,22 @@ describe("DjPlaybackService", () => {
     await expect(service.stop("guild-1", player)).rejects.toThrow("lavalink unavailable");
 
     expect(player.stopPlaying).toHaveBeenCalledWith(true, false);
+    expect(player.destroy).toHaveBeenCalledWith(expect.any(String));
     expect(engine.closeSession).toHaveBeenCalledWith("session-1");
     expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("Lavalink 플레이어 파괴가 실패해도 엔진 세션은 반드시 닫는다", async () => {
+    const engine = createEngine();
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine);
+    await service.start(startInput(player));
+    player.destroy.mockRejectedValueOnce(new Error("destroy unavailable"));
+
+    await expect(service.stop("guild-1", player)).rejects.toThrow("destroy unavailable");
+
+    expect(player.stopPlaying).toHaveBeenCalledWith(true, false);
+    expect(engine.closeSession).toHaveBeenCalledWith("session-1");
   });
 
   it("정지는 Lavalink 재생과 플레이어를 종료한 뒤 엔진 세션을 닫는다", async () => {
@@ -280,7 +394,31 @@ describe("DjPlaybackService", () => {
     expect(player.stopPlaying.mock.invocationCallOrder[0]).toBeLessThan(
       player.destroy.mock.invocationCallOrder[0]!
     );
+    expect(player.destroy.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.closeSession.mock.invocationCallOrder[0]!
+    );
     expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("Lavalink 중지가 끝나기 전에는 player destroy와 엔진 DELETE를 시작하지 않는다", async () => {
+    let releaseStop: (() => void) | undefined;
+    const engine = createEngine();
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine);
+    await service.start(startInput(player));
+    player.stopPlaying.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    }));
+
+    const stopping = service.stop("guild-1", player);
+    await vi.waitFor(() => expect(player.stopPlaying).toHaveBeenCalledOnce());
+    expect(player.destroy).not.toHaveBeenCalled();
+    expect(engine.closeSession).not.toHaveBeenCalled();
+
+    releaseStop?.();
+    await stopping;
+    expect(player.destroy).toHaveBeenCalledOnce();
+    expect(engine.closeSession).toHaveBeenCalledWith("session-1");
   });
 
   it("이미 DJ 모드인 길드에서 두 번째 세션을 시작하지 않는다", async () => {
@@ -295,6 +433,249 @@ describe("DjPlaybackService", () => {
     expect(engine.createSession).toHaveBeenCalledOnce();
     expect(secondPlayer.search).not.toHaveBeenCalled();
     expect(service.isActive("guild-1")).toBe(true);
+  });
+
+  it("오래된 플레이어의 destroy 이벤트는 새 세션을 닫지 않는다", async () => {
+    const engine = createEngine();
+    const activePlayer = createPlayer();
+    const stalePlayer = createPlayer();
+    const service = new DjPlaybackService(engine);
+    await service.start(startInput(activePlayer));
+
+    expect(service.ownsPlayer("guild-1", activePlayer)).toBe(true);
+    expect(service.ownsPlayer("guild-1", stalePlayer)).toBe(false);
+    await service.closeGuild("guild-1", stalePlayer);
+
+    expect(engine.closeSession).not.toHaveBeenCalled();
+    expect(service.isActive("guild-1")).toBe(true);
+  });
+
+  it("봇 종료가 세션 준비 중에 발생해도 생성된 엔진 세션을 닫는다", async () => {
+    let releaseReady: (() => void) | undefined;
+    const engine = createEngine();
+    engine.waitUntilReady.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        releaseReady = () => resolve({
+          createdAt: "2026-08-13T00:00:00Z",
+          currentTrackId: null,
+          id: "session-1",
+          ownerRef: "guild-1",
+          playlistId: "playlist-1",
+          status: "ready"
+        });
+      })
+    );
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine);
+    const start = service.start(startInput(player));
+    await vi.waitFor(() => expect(engine.waitUntilReady).toHaveBeenCalledOnce());
+
+    const waitSignal = engine.waitUntilReady.mock.calls[0]?.[1]?.signal;
+    const closing = service.closeAll();
+    expect(waitSignal?.aborted).toBe(true);
+    releaseReady?.();
+    await closing;
+    await expect(start).rejects.toThrow(/취소/u);
+
+    expect(engine.closeSession).toHaveBeenCalledWith("session-1");
+    expect(player.search).not.toHaveBeenCalled();
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("Lavalink play 대기 중 종료해도 await 뒤 취소를 확인하고 세션을 닫는다", async () => {
+    let releasePlay: (() => void) | undefined;
+    const engine = createEngine();
+    const player = createPlayer();
+    player.play.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        releasePlay = resolve;
+      })
+    );
+    const service = new DjPlaybackService(engine);
+    const start = service.start(startInput(player));
+    await vi.waitFor(() => expect(player.play).toHaveBeenCalledOnce());
+
+    const closing = service.closeGuild("guild-1", player);
+    releasePlay?.();
+    await closing;
+    await expect(start).rejects.toThrow(/취소/u);
+
+    expect(engine.closeSession).toHaveBeenCalledWith("session-1");
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("Lavalink search가 응답하지 않아도 종료 신호가 시작 작업을 즉시 취소한다", async () => {
+    const engine = createEngine();
+    const player = createPlayer();
+    player.search.mockImplementationOnce(() => new Promise<SearchResult>(() => undefined));
+    const service = new DjPlaybackService(engine);
+    const start = service.start(startInput(player));
+    await vi.waitFor(() => expect(player.search).toHaveBeenCalledOnce());
+
+    const closing = service.closeGuild("guild-1", player);
+    const closedPromptly = await Promise.race([
+      closing.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100))
+    ]);
+
+    expect(closedPromptly).toBe(true);
+    await expect(start).rejects.toThrow(/취소/u);
+    expect(engine.closeSession).toHaveBeenCalledWith("session-1");
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("엔진 완료 이벤트가 오면 Lavalink와 엔진 세션을 즉시 정리한다", async () => {
+    let finish: (() => void) | undefined;
+    async function* events() {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      yield { at: "2026-08-13T00:01:00Z", data: {}, event: "session.finished", id: 1 };
+    }
+    const engine = {
+      ...createEngine(),
+      watchEvents: vi.fn(() => events())
+    };
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine);
+    await service.start(startInput(player));
+
+    finish?.();
+    await vi.waitFor(() => expect(engine.closeSession).toHaveBeenCalledWith("session-1"));
+
+    expect(player.stopPlaying).toHaveBeenCalledWith(true, false);
+    expect(player.destroy).toHaveBeenCalledWith(expect.any(String));
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("terminal 이벤트 뒤 첫 DELETE가 실패하면 백그라운드에서 재시도해 tombstone을 정리한다", async () => {
+    async function* events() {
+      yield { at: "2026-08-13T00:01:00Z", data: {}, event: "session.finished", id: 1 };
+    }
+    const engine = {
+      ...createEngine(),
+      watchEvents: vi.fn(() => events())
+    };
+    engine.closeSession
+      .mockRejectedValueOnce(new Error("temporary engine failure"))
+      .mockResolvedValueOnce(undefined);
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine, undefined, {
+      terminalCloseRetryAttempts: 2,
+      terminalCloseRetryDelayMs: 1
+    });
+
+    await service.start(startInput(player));
+
+    await vi.waitFor(() => expect(engine.closeSession).toHaveBeenCalledTimes(2));
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("terminal DELETE가 계속 실패해도 설정된 횟수까지만 재시도하고 tombstone을 보존한다", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      async function* events() {
+        yield { at: "2026-08-13T00:01:00Z", data: {}, event: "session.finished", id: 1 };
+      }
+      const engine = {
+        ...createEngine(),
+        watchEvents: vi.fn(() => events())
+      };
+      engine.closeSession.mockRejectedValue(new Error("engine unavailable"));
+      const service = new DjPlaybackService(engine, undefined, {
+        terminalCloseRetryAttempts: 2,
+        terminalCloseRetryDelayMs: 1
+      });
+
+      await service.start(startInput(createPlayer()));
+
+      await vi.waitFor(() => expect(engine.closeSession).toHaveBeenCalledTimes(3));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(engine.closeSession).toHaveBeenCalledTimes(3);
+      expect(service.isActive("guild-1")).toBe(true);
+      expect(errorLog).toHaveBeenCalledWith(
+        expect.stringContaining("자동 종료 재시도")
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it("events SSE가 잠시 끊기면 마지막 ID부터 재연결하고 재생을 유지한다", async () => {
+    let finish: (() => void) | undefined;
+    async function* firstConnection() {
+      yield { at: "2026-08-13T00:00:30Z", data: {}, event: "session.ready", id: 7 };
+    }
+    async function* secondConnection() {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      yield { at: "2026-08-13T00:01:00Z", data: {}, event: "session.finished", id: 8 };
+    }
+    let connection = 0;
+    const engine = {
+      ...createEngine(),
+      watchEvents: vi.fn((sessionId: string, options?: {
+        lastEventId?: number;
+        signal?: AbortSignal;
+      }) => {
+        void sessionId;
+        void options;
+        return connection++ === 0 ? firstConnection() : secondConnection();
+      })
+    };
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine, undefined, {
+      eventReconnectBaseMs: 1,
+      eventReconnectMaxMs: 1
+    });
+    await service.start(startInput(player));
+
+    await vi.waitFor(() => expect(engine.watchEvents).toHaveBeenCalledTimes(2));
+    expect(engine.watchEvents.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      lastEventId: 7
+    }));
+    expect(engine.closeSession).not.toHaveBeenCalled();
+    expect(service.isActive("guild-1")).toBe(true);
+
+    finish?.();
+    await vi.waitFor(() => expect(engine.closeSession).toHaveBeenCalledWith("session-1"));
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("events SSE 404나 네트워크 오류는 terminal 증거가 아니므로 재연결한다", async () => {
+    let finish: (() => void) | undefined;
+    async function* missingConnection() {
+      throw Object.assign(new Error("temporarily unavailable"), { status: 404 });
+      yield { at: "", data: {}, event: "session.ready", id: 0 };
+    }
+    async function* recoveredConnection() {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      yield { at: "2026-08-13T00:01:00Z", data: {}, event: "session.finished", id: 9 };
+    }
+    let connection = 0;
+    const engine = {
+      ...createEngine(),
+      watchEvents: vi.fn(() => connection++ === 0
+        ? missingConnection()
+        : recoveredConnection())
+    };
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine, undefined, {
+      eventReconnectBaseMs: 1,
+      eventReconnectMaxMs: 1
+    });
+    await service.start(startInput(player));
+
+    await vi.waitFor(() => expect(engine.watchEvents).toHaveBeenCalledTimes(2));
+    expect(engine.closeSession).not.toHaveBeenCalled();
+    expect(service.isActive("guild-1")).toBe(true);
+
+    finish?.();
+    await vi.waitFor(() => expect(engine.closeSession).toHaveBeenCalledWith("session-1"));
+    expect(service.isActive("guild-1")).toBe(false);
   });
 
   it("같은 길드 정리가 동시에 요청되어도 엔진 세션은 한 번만 닫는다", async () => {
@@ -320,6 +701,56 @@ describe("DjPlaybackService", () => {
     expect(service.isActive("guild-1")).toBe(false);
     await service.closeGuild("guild-1");
     expect(engine.closeSession).toHaveBeenCalledOnce();
+  });
+
+  it("엔진 DELETE 실패 시 종료 tombstone을 보존해 새 시작을 막고 재시도한다", async () => {
+    const engine = createEngine();
+    const player = createPlayer();
+    const replacement = createPlayer();
+    const service = new DjPlaybackService(engine);
+    await service.start(startInput(player));
+    engine.closeSession
+      .mockRejectedValueOnce(new Error("engine unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(service.closeGuild("guild-1", player)).rejects.toThrow(
+      "engine unavailable"
+    );
+    expect(service.isActive("guild-1")).toBe(true);
+    expect(service.ownsPlayer("guild-1", player)).toBe(true);
+    await expect(service.start(startInput(replacement))).rejects.toThrow(/이미/u);
+
+    await service.closeGuild("guild-1", player);
+
+    expect(engine.closeSession.mock.calls).toEqual([["session-1"], ["session-1"]]);
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("closeAll은 종료 실패를 숨기지 않고 tombstone을 남겨 다음 정리에서 재시도한다", async () => {
+    const engine = createEngine();
+    const player = createPlayer();
+    const service = new DjPlaybackService(engine);
+    await service.start(startInput(player));
+    engine.closeSession.mockRejectedValue(new Error("engine unavailable"));
+
+    await expect(service.closeAll()).rejects.toThrow(/정리|engine unavailable/u);
+
+    expect(service.isActive("guild-1")).toBe(true);
+    engine.closeSession.mockResolvedValue(undefined);
+    await service.closeAll();
+    expect(service.isActive("guild-1")).toBe(false);
+  });
+
+  it("closeAll 호출 순간부터 이후의 모든 새 세션 시작을 영구 거절한다", async () => {
+    const engine = createEngine();
+    const service = new DjPlaybackService(engine);
+
+    const closing = service.closeAll();
+    await expect(service.start(startInput(createPlayer()))).rejects.toThrow(/종료/u);
+    await closing;
+    await expect(service.start(startInput(createPlayer()))).rejects.toThrow(/종료/u);
+
+    expect(engine.createSession).not.toHaveBeenCalled();
   });
 
   it("closeAll은 활성 길드들을 각각 한 번씩 정리하고 표시 상태도 비운다", async () => {

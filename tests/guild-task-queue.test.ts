@@ -54,4 +54,25 @@ describe("GuildTaskQueue", () => {
 
     await expect(queue.run("guild-1", () => "recovered")).resolves.toBe("recovered");
   });
+
+  it("close는 새 작업을 거절하고 이미 실행 중인 작업이 끝날 때까지 기다린다", async () => {
+    const queue = new GuildTaskQueue();
+    let release: (() => void) | undefined;
+    const running = queue.run("guild-1", () => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    const draining = queue.close();
+
+    await expect(queue.run("guild-1", () => undefined)).rejects.toThrow(/종료/u);
+    let drained = false;
+    void draining.then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    release?.();
+    await Promise.all([running, draining]);
+    expect(drained).toBe(true);
+  });
 });

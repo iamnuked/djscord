@@ -16,7 +16,7 @@ lavalink:
       twitch: false
       vimeo: false
       nico: false
-      http: false
+      http: true
       local: false
     filters:
       volume: true
@@ -41,13 +41,20 @@ plugins:
       - WEBEMBEDDED
 
 logging:
+  request:
+    enabled: false
+    includeClientInfo: false
+    includeHeaders: false
+    includePayload: false
+    includeQueryString: false
   file:
     path: /tmp/lavalink-logs
   level:
     root: INFO
     lavalink: INFO
+    lavalink.server.player: OFF
+    com.sedmelluq.discord.lavaplayer: OFF
 
 metrics:
   prometheus:
     enabled: false
-

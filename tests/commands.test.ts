@@ -133,7 +133,7 @@ describe("commandDefinitions", () => {
     );
   });
 
-  it("디제이는 목록 조회와 플레이리스트 기반 세션 시작을 제공한다", () => {
+  it("디제이는 시작 autocomplete와 전용 제어 명령 전체를 제공한다", () => {
     const dj = command("디제이");
     const subcommands = dj?.options ?? [];
     const start = subcommands.find(({ name }) => name === "시작");
@@ -146,12 +146,29 @@ describe("commandDefinitions", () => {
         ? (energy.choices ?? []).map(({ value }) => value)
         : [];
 
-    expect(subcommands.map(({ name }) => name)).toEqual(expect.arrayContaining(["목록", "시작"]));
-    expect(playlist).toMatchObject({ name: "플레이리스트", required: true, type: 3 });
+    expect(subcommands.map(({ name }) => name)).toEqual([
+      "시작",
+      "일시정지",
+      "계속",
+      "스킵",
+      "종료",
+      "목록"
+    ]);
+    expect(playlist).toMatchObject({
+      autocomplete: true,
+      name: "플레이리스트",
+      required: true,
+      type: 3
+    });
     expect(new Set(energyChoices)).toEqual(
       new Set(["flat", "warmup", "build", "peak", "cooldown"])
     );
-    expect(duration).toMatchObject({ max_value: 120, min_value: 5, type: 4 });
+    expect(duration).toMatchObject({
+      description: expect.stringContaining("기본 60분"),
+      max_value: 120,
+      min_value: 5,
+      type: 4
+    });
   });
 
   it("반복·삭제·이동·탐색·볼륨 입력 범위를 정의한다", () => {

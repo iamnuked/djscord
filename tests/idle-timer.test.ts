@@ -43,4 +43,19 @@ describe("IdleTimerManager", () => {
 
     expect(onExpire).not.toHaveBeenCalled();
   });
+
+  it("cancelAll은 모든 서버의 유휴 타이머를 취소한다", async () => {
+    vi.useFakeTimers();
+    const first = vi.fn();
+    const second = vi.fn();
+    const timers = new IdleTimerManager(300_000);
+
+    timers.schedule("guild-1", first);
+    timers.schedule("guild-2", second);
+    timers.cancelAll();
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
+  });
 });

@@ -3,7 +3,25 @@ import { createMusicBot } from "./discord/music-bot.js";
 
 const bot = createMusicBot(loadConfig());
 
-process.once("SIGINT", () => bot.stop());
-process.once("SIGTERM", () => bot.stop());
+let shuttingDown = false;
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await bot.stop();
+    console.info(`${signal} 신호로 봇을 안전하게 종료했습니다.`);
+    process.exit(0);
+  } catch (error) {
+    console.error(`${signal} 종료 처리에 실패했습니다.`, error);
+    process.exit(1);
+  }
+}
+
+process.once("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.once("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
 
 await bot.start();

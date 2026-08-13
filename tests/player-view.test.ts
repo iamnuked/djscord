@@ -97,7 +97,7 @@ describe("buildPlayerCard", () => {
     expect(firstButton).toMatchObject({ emoji: { name: "▶️" }, style: ButtonStyle.Success });
   });
 
-  it("DJ Engine 라이브 소스는 비밀 URL을 링크하지 않고 추천 관련 버튼을 비활성화한다", () => {
+  it("DJ Engine 라이브 소스는 비밀 URL을 링크하지 않고 플레이어 버튼을 모두 비활성화한다", () => {
     const secretAudioUrl = "http://djengine:8787/api/v1/sessions/session-1/audio.ogg?token=secret";
     const card = buildPlayerCard(
       snapshot({
@@ -115,14 +115,7 @@ describe("buildPlayerCard", () => {
 
     expect(embed?.url).toBeUndefined();
     expect(JSON.stringify(embed)).not.toContain(secretAudioUrl);
-    for (const action of ["autoplay", "like", "dislike"]) {
-      expect(
-        buttons.find(
-          (component) =>
-            "custom_id" in component && component.custom_id === `music:session-1:${action}`
-        )
-      ).toMatchObject({ disabled: true });
-    }
+    expect(buttons.every(({ disabled }) => disabled)).toBe(true);
   });
 
   it("Ko-fi URL이 없으면 후원 버튼만 숨기고 음악 제어는 유지한다", () => {

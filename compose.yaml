@@ -22,8 +22,8 @@ services:
 
   lavalink:
     image: ghcr.io/lavalink-devs/lavalink:4.2.2-alpine@sha256:96be2be7ee50d35a9bd42c8c7b99e2a4b741f09123066c1ebb9e014dd7db204d
-    env_file:
-      - .env
+    environment:
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?LAVALINK_PASSWORD is required}
     healthcheck:
       test: ["CMD-SHELL", "wget -q --header=\"Authorization: $$LAVALINK_PASSWORD\" -O /dev/null http://127.0.0.1:2333/version || exit 1"]
       interval: 10s

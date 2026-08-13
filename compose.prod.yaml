@@ -4,10 +4,15 @@ services:
   bot:
     image: ${BOT_IMAGE:?BOT_IMAGE must be set to an immutable ECR image tag}
     depends_on:
+      engine:
+        condition: service_healthy
       lavalink:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      DJENGINE_API_KEY: ${DJENGINE_API_KEY:?DJENGINE_API_KEY must be set}
+      DJENGINE_BASE_URL: http://engine:8787
     init: true
     healthcheck:
       test: ["CMD", "node", "dist/healthcheck.js"]
@@ -17,6 +22,9 @@ services:
       start_period: 90s
     read_only: true
     restart: unless-stopped
+    networks:
+      - default
+      - djengine-private
     stop_grace_period: 20s
     security_opt:
       - no-new-privileges:true
@@ -35,12 +43,53 @@ services:
         awslogs-group: /djscord/prod/bot
         awslogs-stream-prefix: bot
 
+  engine:
+    image: ${DJENGINE_IMAGE:?DJENGINE_IMAGE must be set to an immutable ECR image tag}
+    environment:
+      DJENGINE_ALLOW_REMOTE: "true"
+      DJENGINE_API_KEY: ${DJENGINE_API_KEY:?DJENGINE_API_KEY must be set}
+      DJENGINE_BIND: 0.0.0.0:8787
+      DJENGINE_DATA_DIR: /data
+      DJENGINE_MUSIC_ROOT: /music
+      DJENGINE_PUBLIC_BASE_URL: http://engine:8787
+      DJENGINE_REKORDBOX_XML: /config/rekordbox.xml
+      RUST_LOG: ${DJENGINE_RUST_LOG:-djengine_server=info}
+    expose:
+      - "8787"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8787/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    read_only: true
+    restart: unless-stopped
+    networks:
+      - djengine-private
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      - ${DJENGINE_DATA_DIR:-/opt/djengine/data}:/data
+      - ${DJENGINE_HOST_MUSIC_ROOT:-/opt/djengine/music}:/music:ro
+      - ${DJENGINE_HOST_REKORDBOX_XML:-/opt/djengine/config/rekordbox.xml}:/config/rekordbox.xml:ro
+    mem_limit: 1g
+    cpus: 1.0
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-ap-northeast-2}
+        awslogs-group: /djscord/prod/engine
+        awslogs-stream-prefix: engine
+
   lavalink:
     image: ghcr.io/lavalink-devs/lavalink:4.2.2-alpine@sha256:96be2be7ee50d35a9bd42c8c7b99e2a4b741f09123066c1ebb9e014dd7db204d
-    env_file:
-      - .env
     environment:
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx1536m
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?LAVALINK_PASSWORD must be set}
     healthcheck:
       test: ["CMD-SHELL", "wget -q --header=\"Authorization: $$LAVALINK_PASSWORD\" -O /dev/null http://127.0.0.1:2333/version || exit 1"]
       interval: 10s
@@ -49,6 +98,9 @@ services:
       start_period: 45s
     read_only: true
     restart: unless-stopped
+    networks:
+      - default
+      - djengine-private
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -66,3 +118,7 @@ services:
         awslogs-region: ${AWS_REGION:-ap-northeast-2}
         awslogs-group: /djscord/prod/lavalink
         awslogs-stream-prefix: lavalink
+
+networks:
+  djengine-private:
+    internal: true

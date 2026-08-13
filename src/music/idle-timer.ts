@@ -25,5 +25,9 @@ export class IdleTimerManager {
       this.#timers.delete(guildId);
     }
   }
-}
 
+  cancelAll(): void {
+    for (const timer of this.#timers.values()) clearTimeout(timer);
+    this.#timers.clear();
+  }
+}

@@ -3,6 +3,7 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_root=$(dirname "$script_dir")
+engine_root=${DJENGINE_SOURCE_ROOT:-$(dirname "$project_root")/djengine}
 stack_name=${STACK_NAME:-djscord-prod}
 aws_region=${AWS_REGION:-ap-northeast-2}
 
@@ -11,12 +12,23 @@ command -v docker >/dev/null 2>&1 || { echo "Docker가 필요합니다." >&2; ex
 command -v git >/dev/null 2>&1 || { echo "Git이 필요합니다." >&2; exit 1; }
 
 cd "$project_root"
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
   echo "커밋되지 않은 변경사항이 있어 릴리스를 만들 수 없습니다." >&2
+  exit 1
+fi
+if [ ! -f "$engine_root/Dockerfile" ] || [ ! -d "$engine_root/.git" ]; then
+  echo "djengine 저장소를 찾지 못했습니다: $engine_root" >&2
+  exit 1
+fi
+engine_changes=$(git -C "$engine_root" status --porcelain --untracked-files=all \
+  | sed '/^?? rekordbox\.xml$/d')
+if [ -n "$engine_changes" ]; then
+  echo "djengine에 커밋되지 않은 변경사항이 있어 릴리스를 만들 수 없습니다." >&2
   exit 1
 fi
 
 image_tag=$(git rev-parse --short=12 HEAD)
+engine_image_tag=$(git -C "$engine_root" rev-parse --short=12 HEAD)
 ecr_repository_uri=$(aws cloudformation describe-stacks \
   --region "$aws_region" \
   --stack-name "$stack_name" \
@@ -27,9 +39,18 @@ release_bucket=$(aws cloudformation describe-stacks \
   --stack-name "$stack_name" \
   --query "Stacks[0].Outputs[?OutputKey=='ReleaseBucketName'].OutputValue | [0]" \
   --output text)
+engine_ecr_repository_uri=$(aws cloudformation describe-stacks \
+  --region "$aws_region" \
+  --stack-name "$stack_name" \
+  --query "Stacks[0].Outputs[?OutputKey=='EngineEcrRepositoryUri'].OutputValue | [0]" \
+  --output text)
 
 if [ -z "$ecr_repository_uri" ] || [ "$ecr_repository_uri" = "None" ]; then
   echo "CloudFormation에서 ECR 저장소를 찾지 못했습니다." >&2
+  exit 1
+fi
+if [ -z "$engine_ecr_repository_uri" ] || [ "$engine_ecr_repository_uri" = "None" ]; then
+  echo "CloudFormation에서 djengine ECR 저장소를 찾지 못했습니다." >&2
   exit 1
 fi
 
@@ -42,6 +63,18 @@ trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
 source_directory="$temporary_directory/source"
 mkdir -p "$source_directory"
 git archive HEAD | tar -x -C "$source_directory"
+engine_source_directory="$temporary_directory/engine-source"
+mkdir -p "$engine_source_directory"
+git -C "$engine_root" archive HEAD | tar -x -C "$engine_source_directory"
+
+engine_test_image="djengine-rust-test:$engine_image_tag"
+docker buildx build \
+  --platform linux/amd64 \
+  --target rust-test \
+  --load \
+  --tag "$engine_test_image" \
+  "$engine_source_directory"
+docker run --rm "$engine_test_image"
 
 bot_image="$ecr_repository_uri:$image_tag"
 repository_name=${ecr_repository_uri#*/}
@@ -58,6 +91,23 @@ else
     --tag "$bot_image" \
     --push \
     "$source_directory"
+fi
+
+engine_image="$engine_ecr_repository_uri:$engine_image_tag"
+engine_repository_name=${engine_ecr_repository_uri#*/}
+if aws ecr describe-images \
+  --region "$aws_region" \
+  --repository-name "$engine_repository_name" \
+  --image-ids imageTag="$engine_image_tag" \
+  >/dev/null 2>&1; then
+  echo "이미 게시된 djengine ECR 이미지를 재사용합니다: $engine_image"
+else
+  docker buildx build \
+    --platform linux/amd64 \
+    --target runtime \
+    --tag "$engine_image" \
+    --push \
+    "$engine_source_directory"
 fi
 
 bundle_directory="$temporary_directory/bundle"
@@ -78,4 +128,5 @@ aws s3 cp "$archive_path" "$release_uri" --region "$aws_region" >/dev/null
 echo "릴리스를 게시했습니다."
 echo "이미지: $bot_image"
 echo "배포 묶음: $release_uri"
-echo "다음 명령: $project_root/deploy/remote-deploy.sh $image_tag"
+echo "djengine 이미지: $engine_image"
+echo "다음 명령: $project_root/deploy/remote-deploy.sh $image_tag $engine_image_tag"
