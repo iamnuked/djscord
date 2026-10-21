@@ -11,8 +11,7 @@ interface CleanupRemovedGuildOptions<TPlayer extends RemovedGuildPlayer> {
 
 /**
  * Releases every resource that can outlive a Discord guild removal event.
- * The primary player is delegated to the DJ playback service so its engine
- * session and mix publisher are stopped before any duplicate player is torn down.
+ * Playback cleanup runs before duplicate players and the player message are released.
  */
 export async function cleanupRemovedGuild<TPlayer extends RemovedGuildPlayer>(
   options: CleanupRemovedGuildOptions<TPlayer>

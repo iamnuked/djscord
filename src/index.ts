@@ -1,13 +1,17 @@
 import { loadConfig } from "./config.js";
 import { createMusicBot } from "./discord/music-bot.js";
+import { startDesktopControlServer } from "./desktop/control-server.js";
 
 const bot = createMusicBot(loadConfig());
+const desktopServer = await startDesktopControlServer(bot);
 
 let shuttingDown = false;
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
+    desktopServer?.close();
+    desktopServer?.closeAllConnections();
     await bot.stop();
     console.info(`${signal} 신호로 봇을 안전하게 종료했습니다.`);
     process.exit(0);

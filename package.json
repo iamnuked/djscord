@@ -1,6 +1,7 @@
 {
   "name": "djscord-music-bot",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Discord music bot MVP powered by Lavalink",
@@ -8,12 +9,13 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && npm run licenses:generate",
     "check": "tsc --noEmit",
     "commands:deploy": "tsx src/deploy-commands.ts",
     "commands:deploy:prod": "node dist/deploy-commands.js",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint .",
+    "licenses:generate": "node scripts/generate-notices.mjs",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"

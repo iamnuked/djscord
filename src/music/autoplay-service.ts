@@ -12,6 +12,8 @@ interface RecommendationRequest {
   recentTrackIds: ReadonlySet<string>;
 }
 
+const MIX_TRACK_SEED_LIMIT = 10;
+
 export class AutoplayService {
   readonly #loader: TrackLoader;
 
@@ -37,8 +39,28 @@ export class AutoplayService {
     const mixUrl = `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`;
     const result = await this.#loader.load(mixUrl, "autoplay", undefined);
 
+    const mixTracks = result.tracks
+      .filter((track) => !track.isStream && track.identifier !== seed.identifier)
+      .filter((track, index, tracks) =>
+        tracks.findIndex((candidate) => candidate.identifier === track.identifier) === index
+      )
+      .slice(0, MIX_TRACK_SEED_LIMIT);
+    const expandedCandidates = await Promise.all(
+      mixTracks.map(async (mixTrack) => {
+        try {
+          const mixTrackIdentifier = encodeURIComponent(mixTrack.identifier);
+          const mixTrackUrl =
+            `https://www.youtube.com/watch?v=${mixTrackIdentifier}&list=RD${mixTrackIdentifier}`;
+          return (await this.#loader.load(mixTrackUrl, "autoplay", undefined)).tracks;
+        } catch {
+          return [];
+        }
+      })
+    );
+    const candidates = rankMixCandidates(expandedCandidates);
+
     return selectRecommendation({
-      candidates: result.tracks,
+      candidates: candidates.length === 0 ? result.tracks : candidates,
       currentIdentifier: seed.identifier,
       ...(excludedAuthors === undefined ? {} : { excludedAuthors }),
       ...(excludedTrackIds === undefined ? {} : { excludedIdentifiers: excludedTrackIds }),
@@ -46,4 +68,35 @@ export class AutoplayService {
       recentIdentifiers: recentTrackIds
     });
   }
+}
+
+function rankMixCandidates(candidateGroups: readonly (readonly MusicTrack[])[]): MusicTrack[] {
+  const occurrences = new Map<
+    string,
+    { firstPosition: number; track: MusicTrack; votes: number }
+  >();
+
+  candidateGroups.forEach((candidates, groupIndex) => {
+    const identifiersInGroup = new Set<string>();
+    candidates.forEach((candidate, candidateIndex) => {
+      if (identifiersInGroup.has(candidate.identifier)) {
+        return;
+      }
+      identifiersInGroup.add(candidate.identifier);
+      const existing = occurrences.get(candidate.identifier);
+      if (existing !== undefined) {
+        existing.votes += 1;
+        return;
+      }
+      occurrences.set(candidate.identifier, {
+        firstPosition: groupIndex * MIX_TRACK_SEED_LIMIT + candidateIndex,
+        track: candidate,
+        votes: 1
+      });
+    });
+  });
+
+  return [...occurrences.values()]
+    .sort((left, right) => right.votes - left.votes || left.firstPosition - right.firstPosition)
+    .map(({ track }) => track);
 }

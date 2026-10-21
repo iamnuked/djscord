@@ -81,6 +81,15 @@ export const commandDefinitions = [
     ),
   new SlashCommandBuilder().setName("정지").setDescription("재생을 끝내고 음성 채널에서 나갑니다."),
   new SlashCommandBuilder()
+    .setName("시스템오디오")
+    .setDescription("이 맥에서 캡처 중인 시스템 오디오 방송을 시작하거나 종료합니다.")
+    .addSubcommand((subcommand) =>
+      subcommand.setName("시작").setDescription("마이크 없이 맥 시스템 오디오 방송을 시작합니다.")
+    )
+    .addSubcommand((subcommand) =>
+      subcommand.setName("종료").setDescription("시스템 오디오 방송을 종료하고 음성 채널에서 나갑니다.")
+    ),
+  new SlashCommandBuilder()
     .setName("장르")
     .setDescription("장르에 맞는 YouTube 플레이리스트를 만듭니다.")
     .addStringOption((option) =>
@@ -95,57 +104,6 @@ export const commandDefinitions = [
         .setDescription("만들 곡 수 (기본 20곡)")
         .setMinValue(5)
         .setMaxValue(30)
-    ),
-  new SlashCommandBuilder()
-    .setName("디제이")
-    .setDescription("DJ Engine의 로컬 플레이리스트를 자동 믹싱합니다.")
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("시작")
-        .setDescription("선택한 플레이리스트로 자동 DJ 세션을 시작합니다.")
-        .addStringOption((option) =>
-          option
-            .setName("플레이리스트")
-            .setDescription("/디제이 목록에 표시된 플레이리스트 ID")
-            .setRequired(true)
-            .setAutocomplete(true)
-        )
-        .addStringOption((option) =>
-          option
-            .setName("에너지")
-            .setDescription("믹스의 에너지 흐름 (기본: 빌드업)")
-            .addChoices(
-              { name: "일정하게", value: "flat" },
-              { name: "워밍업", value: "warmup" },
-              { name: "빌드업", value: "build" },
-              { name: "피크", value: "peak" },
-              { name: "쿨다운", value: "cooldown" }
-            )
-        )
-        .addIntegerOption((option) =>
-          option
-            .setName("시간")
-            .setDescription("재생 시간(분), 기본 60분")
-            .setMinValue(5)
-            .setMaxValue(120)
-        )
-    )
-    .addSubcommand((subcommand) =>
-      subcommand.setName("일시정지").setDescription("DJ 믹스를 다음 마디에서 멈춥니다.")
-    )
-    .addSubcommand((subcommand) =>
-      subcommand.setName("계속").setDescription("DJ 믹스를 다음 마디에서 계속합니다.")
-    )
-    .addSubcommand((subcommand) =>
-      subcommand.setName("스킵").setDescription("DJ 믹스의 현재 곡을 다음 마디에서 넘깁니다.")
-    )
-    .addSubcommand((subcommand) =>
-      subcommand.setName("종료").setDescription("DJ 믹스를 종료하고 음성 채널에서 나갑니다.")
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("목록")
-        .setDescription("DJ Engine에서 사용할 수 있는 플레이리스트를 확인합니다.")
     ),
   new SlashCommandBuilder()
     .setName("설정")

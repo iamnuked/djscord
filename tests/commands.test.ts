@@ -3,15 +3,14 @@ import { describe, expect, it } from "vitest";
 import { commandDefinitions } from "../src/discord/commands.js";
 
 function command(name: string) {
-  return commandDefinitions
-    .map((definition) => definition.toJSON())
-    .find((item) => item.name === name);
+  return commandDefinitions.find((definition) => definition.name === name)?.toJSON();
 }
 
 describe("commandDefinitions", () => {
-  it("재생 제어, 장르, DJ Engine, 저장 음악, 서버 설정과 사용법 명령을 등록한다", () => {
+  it("재생 제어, 장르, 저장 음악, 서버 설정, 사용법을 포함한 한국어 명령 20개를 등록한다", () => {
     const commands = commandDefinitions.map((command) => command.toJSON());
 
+    expect(commands).toHaveLength(20);
     expect(commands.map(({ name }) => name)).toEqual(
       expect.arrayContaining([
         "재생",
@@ -27,8 +26,8 @@ describe("commandDefinitions", () => {
         "대기열",
         "자동재생",
         "정지",
+        "시스템오디오",
         "장르",
-        "디제이",
         "설정",
         "좋아요",
         "내음악",
@@ -63,6 +62,15 @@ describe("commandDefinitions", () => {
       required: true,
       type: 3
     });
+  });
+
+  it("시스템 오디오는 마이크 옵션 없이 시작·종료 하위 명령만 제공한다", () => {
+    const systemAudio = command("시스템오디오");
+
+    expect(systemAudio?.options?.map(({ name }) => name)).toEqual(["시작", "종료"]);
+    for (const option of systemAudio?.options ?? []) {
+      expect("options" in option ? option.options ?? [] : []).toEqual([]);
+    }
   });
 
   it("자동재생 명령은 켜기와 끄기 선택지만 제공한다", () => {
@@ -131,44 +139,6 @@ describe("commandDefinitions", () => {
         })
       ])
     );
-  });
-
-  it("디제이는 시작 autocomplete와 전용 제어 명령 전체를 제공한다", () => {
-    const dj = command("디제이");
-    const subcommands = dj?.options ?? [];
-    const start = subcommands.find(({ name }) => name === "시작");
-    const startOptions = start !== undefined && "options" in start ? (start.options ?? []) : [];
-    const playlist = startOptions.find(({ name }) => name === "플레이리스트");
-    const energy = startOptions.find(({ name }) => name === "에너지");
-    const duration = startOptions.find(({ type }) => type === 4);
-    const energyChoices =
-      energy !== undefined && "choices" in energy
-        ? (energy.choices ?? []).map(({ value }) => value)
-        : [];
-
-    expect(subcommands.map(({ name }) => name)).toEqual([
-      "시작",
-      "일시정지",
-      "계속",
-      "스킵",
-      "종료",
-      "목록"
-    ]);
-    expect(playlist).toMatchObject({
-      autocomplete: true,
-      name: "플레이리스트",
-      required: true,
-      type: 3
-    });
-    expect(new Set(energyChoices)).toEqual(
-      new Set(["flat", "warmup", "build", "peak", "cooldown"])
-    );
-    expect(duration).toMatchObject({
-      description: expect.stringContaining("기본 60분"),
-      max_value: 120,
-      min_value: 5,
-      type: 4
-    });
   });
 
   it("반복·삭제·이동·탐색·볼륨 입력 범위를 정의한다", () => {

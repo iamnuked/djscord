@@ -7,7 +7,7 @@ function player() {
 }
 
 describe("cleanupRemovedGuild", () => {
-  it("DJ 재생 정리를 먼저 끝내고 플레이어 메시지를 종료한다", async () => {
+  it("재생 정리를 먼저 끝내고 플레이어 메시지를 종료한다", async () => {
     const activePlayer = player();
     const calls: string[] = [];
 

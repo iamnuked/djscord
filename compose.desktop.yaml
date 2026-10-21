@@ -1,0 +1,8 @@
+services:
+  bot:
+    env_file:
+      - .desktop-control.env
+    environment:
+      SYSTEM_AUDIO_STREAM_URL: http://host.docker.internal:8788/system-audio.wav
+    ports:
+      - "127.0.0.1:8789:8789"

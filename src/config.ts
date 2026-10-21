@@ -4,17 +4,6 @@ const environmentSchema = z.object({
   DATABASE_PATH: z.string().min(1, "DATABASE_PATH는 빈 값일 수 없습니다.").default("/data/djscord.sqlite"),
   DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID가 필요합니다."),
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN이 필요합니다."),
-  DJENGINE_API_KEY: z
-    .string()
-    .refine(
-      (value) => new TextEncoder().encode(value).length >= 32,
-      "DJENGINE_API_KEY는 32바이트 이상이어야 합니다."
-    )
-    .optional(),
-  DJENGINE_BASE_URL: z
-    .url("DJENGINE_BASE_URL은 올바른 URL이어야 합니다.")
-    .refine(isSafeDjEngineBaseUrl, "DJENGINE_BASE_URL은 HTTP(S) 주소여야 하며 인증 정보를 포함할 수 없습니다.")
-    .optional(),
   KOFI_URL: z
     .string()
     .refine(isKofiUrl, "KOFI_URL은 https://ko-fi.com/ 주소여야 합니다.")
@@ -23,39 +12,13 @@ const environmentSchema = z.object({
   LAVALINK_HOST: z.string().min(1).default("lavalink"),
   LAVALINK_PASSWORD: z.string().min(12, "LAVALINK_PASSWORD는 12자 이상이어야 합니다."),
   LAVALINK_PORT: z.coerce.number().int().positive().max(65_535).default(2333),
-  MIX_INGEST_SECRET: z
-    .string()
+  SYSTEM_AUDIO_STREAM_URL: z
+    .url("SYSTEM_AUDIO_STREAM_URL은 올바른 URL이어야 합니다.")
     .refine(
-      (value) => new TextEncoder().encode(value).length >= 32,
-      "MIX_INGEST_SECRET은 32바이트 이상이어야 합니다."
+      isSafeSystemAudioUrl,
+      "SYSTEM_AUDIO_STREAM_URL은 인증 정보·검색어·fragment가 없는 HTTP(S) 주소여야 합니다."
     )
-    .optional(),
-  MIX_INGEST_URL: z
-    .url("MIX_INGEST_URL은 올바른 URL이어야 합니다.")
-    .refine(isSafeHttpsUrl, "MIX_INGEST_URL은 인증 정보가 없는 HTTPS 주소여야 합니다.")
-    .optional(),
-  MIX_PUBLIC_URL: z
-    .url("MIX_PUBLIC_URL은 올바른 URL이어야 합니다.")
-    .refine(isSafeHttpsUrl, "MIX_PUBLIC_URL은 인증 정보가 없는 HTTPS 주소여야 합니다.")
     .optional()
-}).superRefine((environment, context) => {
-  if (environment.DJENGINE_BASE_URL !== undefined && environment.DJENGINE_API_KEY === undefined) {
-    context.addIssue({ code: "custom", message: "DJENGINE_API_KEY를 함께 설정해야 합니다." });
-  }
-  if (environment.DJENGINE_API_KEY !== undefined && environment.DJENGINE_BASE_URL === undefined) {
-    context.addIssue({ code: "custom", message: "DJENGINE_BASE_URL을 함께 설정해야 합니다." });
-  }
-  const mixValues = [
-    environment.MIX_INGEST_SECRET,
-    environment.MIX_INGEST_URL,
-    environment.MIX_PUBLIC_URL
-  ];
-  if (mixValues.some((value) => value !== undefined) && mixValues.some((value) => value === undefined)) {
-    context.addIssue({
-      code: "custom",
-      message: "MIX_INGEST_URL, MIX_INGEST_SECRET, MIX_PUBLIC_URL을 모두 함께 설정해야 합니다."
-    });
-  }
 });
 
 export type AppConfig = z.infer<typeof environmentSchema>;
@@ -81,26 +44,11 @@ function isKofiUrl(value: string): boolean {
   }
 }
 
-function isSafeDjEngineBaseUrl(value: string): boolean {
+function isSafeSystemAudioUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
-      url.username === "" &&
-      url.password === "" &&
-      url.search === "" &&
-      url.hash === ""
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isSafeHttpsUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
       url.username === "" &&
       url.password === "" &&
       url.search === "" &&

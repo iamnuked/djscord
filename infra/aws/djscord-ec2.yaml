@@ -50,34 +50,6 @@ Resources:
             ]
           }
 
-  EngineRepository:
-    Type: AWS::ECR::Repository
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      RepositoryName: djscord/engine
-      ImageTagMutability: IMMUTABLE
-      ImageScanningConfiguration:
-        ScanOnPush: true
-      EncryptionConfiguration:
-        EncryptionType: AES256
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep the newest 20 engine images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 20
-                },
-                "action": { "type": "expire" }
-              }
-            ]
-          }
-
   ReleaseBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -115,14 +87,6 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: /djscord/prod/lavalink
-      RetentionInDays: 30
-
-  EngineLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: /djscord/prod/engine
       RetentionInDays: 30
 
   InstanceRole:
@@ -203,7 +167,7 @@ Resources:
           #!/bin/bash
           set -euxo pipefail
           dnf update -y
-          dnf install -y docker curl util-linux
+          dnf install -y docker curl
           systemctl enable --now docker
           install -d -m 0755 /usr/local/lib/docker/cli-plugins
           case "$(uname -m)" in
@@ -218,9 +182,8 @@ Resources:
           cd /tmp
           sha256sum -c $compose_name.sha256
           install -m 0755 /tmp/$compose_name /usr/local/lib/docker/cli-plugins/docker-compose
-          install -d -m 0755 /opt/djscord /opt/djscord/releases /opt/djengine
+          install -d -m 0755 /opt/djscord /opt/djscord/releases
           install -d -m 0750 -o 1000 -g 1000 /opt/djscord/data
-          install -d -m 0750 -o 10001 -g 10001 /opt/djengine/data
 
 Outputs:
   InstanceId:
@@ -229,9 +192,6 @@ Outputs:
   EcrRepositoryUri:
     Description: Private ECR repository for immutable bot images
     Value: !GetAtt BotRepository.RepositoryUri
-  EngineEcrRepositoryUri:
-    Description: Private ECR repository for immutable djengine images
-    Value: !GetAtt EngineRepository.RepositoryUri
   ReleaseBucketName:
     Description: Private S3 bucket for Compose and deployment scripts
     Value: !Ref ReleaseBucket
@@ -239,5 +199,3 @@ Outputs:
     Value: !Ref BotLogGroup
   LavalinkLogGroupName:
     Value: !Ref LavalinkLogGroup
-  EngineLogGroupName:
-    Value: !Ref EngineLogGroup

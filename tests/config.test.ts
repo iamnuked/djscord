@@ -23,6 +23,24 @@ describe("loadConfig", () => {
       .toBe("/tmp/test.sqlite");
   });
 
+  it("시스템 오디오 스트림 주소는 인증 정보 없는 HTTP(S) 주소만 허용한다", () => {
+    expect(
+      loadConfig({
+        ...requiredEnvironment,
+        SYSTEM_AUDIO_STREAM_URL: "http://host.docker.internal:8788/system-audio.wav"
+      }).SYSTEM_AUDIO_STREAM_URL
+    ).toBe("http://host.docker.internal:8788/system-audio.wav");
+    for (const url of [
+      "file:///tmp/system-audio.wav",
+      "http://user:password@localhost:8788/system-audio.wav",
+      "http://localhost:8788/system-audio.wav?token=secret"
+    ]) {
+      expect(() => loadConfig({ ...requiredEnvironment, SYSTEM_AUDIO_STREAM_URL: url })).toThrow(
+        /SYSTEM_AUDIO_STREAM_URL/u
+      );
+    }
+  });
+
   it("전역 명령 등록에는 길드 ID가 필요하지 않다", () => {
     expect(() => loadConfig(requiredEnvironment)).not.toThrow();
   });
@@ -49,134 +67,5 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...requiredEnvironment, LASTFM_API_KEY: "" })).toThrow(
       "LASTFM_API_KEY는 빈 값일 수 없습니다."
     );
-  });
-
-  it("DJ Engine URL과 API 키는 함께 설정해야 한다", () => {
-    const enabled = loadConfig({
-      ...requiredEnvironment,
-      DJENGINE_API_KEY: "x".repeat(32),
-      DJENGINE_BASE_URL: "http://djengine:8787"
-    });
-
-    expect(enabled).toMatchObject({
-      DJENGINE_API_KEY: "x".repeat(32),
-      DJENGINE_BASE_URL: "http://djengine:8787"
-    });
-    expect(() =>
-      loadConfig({ ...requiredEnvironment, DJENGINE_BASE_URL: "http://djengine:8787" })
-    ).toThrow(/DJENGINE_API_KEY/);
-    expect(() =>
-      loadConfig({ ...requiredEnvironment, DJENGINE_API_KEY: "x".repeat(32) })
-    ).toThrow(/DJENGINE_BASE_URL/);
-  });
-
-  it("DJ Engine API 키는 32바이트 이상이어야 한다", () => {
-    expect(() =>
-      loadConfig({
-        ...requiredEnvironment,
-        DJENGINE_API_KEY: "x".repeat(31),
-        DJENGINE_BASE_URL: "http://djengine:8787"
-      })
-    ).toThrow(/DJENGINE_API_KEY.*32/u);
-
-    const multibyteKey = "가".repeat(11);
-    expect(
-      loadConfig({
-        ...requiredEnvironment,
-        DJENGINE_API_KEY: multibyteKey,
-        DJENGINE_BASE_URL: "http://djengine:8787"
-      })
-    ).toMatchObject({ DJENGINE_API_KEY: multibyteKey });
-  });
-
-  it("DJ Engine 주소는 안전한 HTTP(S) base URL만 허용한다", () => {
-    for (const baseUrl of [
-      "file:///tmp/engine",
-      "ftp://engine:8787",
-      "http://user:password@engine:8787",
-      "http://engine:8787?token=secret"
-    ]) {
-      expect(() =>
-        loadConfig({
-          ...requiredEnvironment,
-          DJENGINE_API_KEY: "x".repeat(32),
-          DJENGINE_BASE_URL: baseUrl
-        })
-      ).toThrow(/DJENGINE_BASE_URL/u);
-    }
-  });
-
-  it("형식이 잘못된 DJ Engine 주소도 native TypeError가 아닌 설정 오류로 보고한다", () => {
-    let thrown: unknown;
-
-    try {
-      loadConfig({
-        ...requiredEnvironment,
-        DJENGINE_API_KEY: "x".repeat(32),
-        DJENGINE_BASE_URL: "not a url"
-      });
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeInstanceOf(Error);
-    expect(thrown).not.toBeInstanceOf(TypeError);
-    expect((thrown as Error).message).toMatch(
-      /환경 변수 설정을 확인해주세요:[\s\S]*DJENGINE_BASE_URL은 올바른 URL이어야 합니다\./u
-    );
-  });
-
-  it("mix ingest 설정은 세 값이 모두 있을 때만 활성화한다", () => {
-    const configured = loadConfig({
-      ...requiredEnvironment,
-      MIX_INGEST_SECRET: "m".repeat(32),
-      MIX_INGEST_URL: "https://djscord.example/api/internal/v1",
-      MIX_PUBLIC_URL: "https://djscord.example/mix"
-    });
-
-    expect(configured).toMatchObject({
-      MIX_INGEST_SECRET: "m".repeat(32),
-      MIX_INGEST_URL: "https://djscord.example/api/internal/v1",
-      MIX_PUBLIC_URL: "https://djscord.example/mix"
-    });
-    expect(() =>
-      loadConfig({
-        ...requiredEnvironment,
-        MIX_INGEST_SECRET: "m".repeat(32),
-        MIX_INGEST_URL: "https://djscord.example/api/internal/v1"
-      })
-    ).toThrow(/MIX_PUBLIC_URL/u);
-  });
-
-  it("mix URL은 HTTPS와 안전한 secret만 허용한다", () => {
-    expect(() =>
-      loadConfig({
-        ...requiredEnvironment,
-        MIX_INGEST_SECRET: "short",
-        MIX_INGEST_URL: "http://djscord.example/api/internal/v1",
-        MIX_PUBLIC_URL: "https://djscord.example/mix"
-      })
-    ).toThrow(/MIX_INGEST/u);
-  });
-
-  it("잘못된 mix URL도 native TypeError 대신 설정 오류로 설명한다", () => {
-    expect(() =>
-      loadConfig({
-        ...requiredEnvironment,
-        MIX_INGEST_SECRET: "m".repeat(32),
-        MIX_INGEST_URL: "not a url",
-        MIX_PUBLIC_URL: "https://djscord.example/mix"
-      })
-    ).toThrow(/환경 변수|MIX_INGEST_URL/u);
-    try {
-      loadConfig({
-        ...requiredEnvironment,
-        MIX_INGEST_SECRET: "m".repeat(32),
-        MIX_INGEST_URL: "not a url",
-        MIX_PUBLIC_URL: "https://djscord.example/mix"
-      });
-    } catch (error) {
-      expect(error).not.toBeInstanceOf(TypeError);
-    }
   });
 });

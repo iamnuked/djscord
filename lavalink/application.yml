@@ -5,8 +5,8 @@ server:
 lavalink:
   pluginsDir: /opt/Lavalink/plugins
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.2"
-      snapshot: false
+    - dependency: "dev.lavalink.youtube:youtube-plugin:34ee4c5f6b4608c19880ff62f80540c0048f537e"
+      snapshot: true
   server:
     password: "${LAVALINK_PASSWORD}"
     sources:
@@ -36,9 +36,27 @@ plugins:
     allowDirectPlaylistIds: true
     clients:
       - MUSIC
-      - ANDROID_VR
       - WEB
-      - WEBEMBEDDED
+      - IOS
+
+    clientOptions:
+      WEB:
+        playback: false
+        playlistLoading: false
+        videoLoading: false
+        searching: true
+
+      IOS:
+        playback: true
+        searching: false
+
+    oauth:
+      enabled: false
+
+    remoteCipher:
+      url: "https://cipher.kikkia.dev/"
+      userAgent: "djscord"
+
 
 logging:
   request:
@@ -52,8 +70,9 @@ logging:
   level:
     root: INFO
     lavalink: INFO
-    lavalink.server.player: OFF
-    com.sedmelluq.discord.lavaplayer: OFF
+    lavalink.server.player: INFO
+    com.sedmelluq.discord.lavaplayer: INFO
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
 
 metrics:
   prometheus:

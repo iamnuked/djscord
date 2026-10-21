@@ -9,11 +9,8 @@ Node.js와 `discord.js`로 Discord 명령을 처리하고, Lavalink가 YouTube �
   - K-pop은 BTS·BLACKPINK·aespa·IVE·Stray Kids·NewJeans의 대표 시드를 라운드 로빈으로 섞어 특정 검색 결과에 치우치는 현상을 줄임
   - Last.fm API 키가 있으면 등록되지 않은 장르의 상위 아티스트 6명을 여러 Mix 시드로 사용
   - Last.fm 장애나 API 키 미설정 시 기존 YouTube Music 검색과 일반 YouTube 검색 폴백을 그대로 사용
-- `/디제이 목록|시작|일시정지|계속|스킵|종료`: sibling `djengine`의 레코드박스 플레이리스트를 자동 선곡·전환한 라이브 믹스로 재생·제어
-  - 에너지 흐름(`일정하게`, `워밍업`, `빌드업`, `피크`, `쿨다운`)과 5~120분 재생 시간 선택(기본 60분)
-  - 웹 믹싱 화면에서 두 덱의 파형·재생 위치·EQ·전환 상태를 확인
-  - DJ 모드에서는 `/디제이` 전용 제어와 `/볼륨`만 허용하며 기존 음악 명령과 플레이어 버튼은 비활성화
 - `/일시정지`, `/계속`, `/스킵`, `/정지`
+- `/시스템오디오 시작|종료`: 맥에서 실행 중인 시스템 오디오 캡처 도우미의 소리를 마이크 없이 음성 채널에 방송
 - `/반복`, `/셔플`, `/삭제`, `/이동`, `/탐색`, `/볼륨`: 반복 모드와 대기열 순서, 재생 위치, 음량 제어
 - `/대기열`: 현재 곡과 다음 10곡 표시
 - `/자동재생`: 마지막 곡 기반 YouTube Mix 추천 켜기·끄기
@@ -58,30 +55,61 @@ DATABASE_PATH=/data/djscord.sqlite
 LAVALINK_HOST=lavalink
 LAVALINK_PORT=2333
 LAVALINK_PASSWORD=충분히_긴_임의의_비밀번호
-# DJ Engine을 사용할 때만 아래 네 값을 추가합니다(마지막 두 값은 Compose mount 경로입니다).
-DJENGINE_API_KEY=32바이트_이상의_임의_문자열
-DJENGINE_BASE_URL=http://engine:8787
-DJENGINE_HOST_MUSIC_ROOT=/음악_폴더의_절대경로
-DJENGINE_HOST_REKORDBOX_XML=/rekordbox.xml의_절대경로
-# 웹 믹싱 화면을 사용할 때만 아래 세 값을 모두 추가합니다.
-MIX_INGEST_URL=https://웹사이트_호스트/api/internal/v1
-MIX_INGEST_SECRET=32바이트_이상의_임의_문자열
-MIX_PUBLIC_URL=https://웹사이트_호스트/mix
+# 맥에서 시스템 오디오 방송을 사용할 때만 설정합니다(Docker Desktop for Mac).
+SYSTEM_AUDIO_STREAM_URL=http://host.docker.internal:8788/system-audio.wav
 ```
 
 `LAVALINK_PASSWORD`는 Node.js 봇과 Lavalink가 서로를 인증할 때 사용합니다. 외부 서비스의 비밀번호가 아니라 이 프로젝트 안에서 직접 정하는 값입니다.
+
+### 맥 시스템 오디오 방송 (마이크 미포함)
+
+`macos-system-audio-capture.swift`는 Apple의 Core Audio taps를 사용하는 작은 macOS 실행 프로그램입니다(macOS 14.2 이상). Core Audio taps는 앱에서 재생하는 출력 오디오를 가져오는 Apple 기본 API입니다. 화면 캡처와 마이크 입력 없이 전체 시스템 소리를 PCM 16-bit 스테레오 WAV 스트림으로 제공합니다. 샘플링 주파수는 탭의 실제 오디오 형식을 사용합니다.
+
+처음 한 번 터미널에서 도우미를 컴파일하고 실행합니다.
+
+```bash
+swiftc -parse-as-library macos-system-audio-capture.swift -o djscord-system-audio \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist \
+  -Xlinker macos-system-audio-info.plist
+./djscord-system-audio
+```
+
+macOS가 **시스템 오디오 녹음** 권한을 요청하면 허용합니다. `macos-system-audio-info.plist`에는 권한 요청에 표시할 사용 목적이 들어 있어 컴파일 시 실행 파일에 포함해야 합니다. 이전 ScreenCaptureKit 도우미는 `Ctrl+C`로 종료한 뒤 새 파일을 실행하세요. 실행 뒤 `.env`에 `SYSTEM_AUDIO_STREAM_URL=http://host.docker.internal:8788/system-audio.wav`를 추가하고 봇을 재시작하세요. `host.docker.internal`은 Docker Desktop 컨테이너가 맥 호스트에 접속할 때 쓰는 이름입니다.
+
+그다음 Discord 음성 채널에 들어가 `/시스템오디오 시작`을 입력하면 현재 맥에서 재생되는 시스템 소리만 방송됩니다. `/시스템오디오 종료` 또는 기존 `/정지`로 방송을 끝낼 수 있습니다. 도우미를 먼저 실행하지 않았거나 권한을 거부한 경우 봇은 스트림 연결 실패를 안내합니다.
 
 `KOFI_URL`은 선택값입니다. `https://ko-fi.com/아이디` 형태의 본인 후원 페이지를 넣으면 플레이어 카드에 `☕ 서버비 지원` 링크 버튼이 나타납니다. 설정하지 않으면 후원 버튼만 숨겨지고 음악 기능은 그대로 동작합니다.
 
 `LASTFM_API_KEY`도 선택값입니다. [Last.fm API 계정 페이지](https://www.last.fm/api/account/create)에서 키를 발급해 넣으면 K-pop 외 장르도 해당 태그의 상위 아티스트 6명을 대표 시드로 사용합니다. 같은 장르 결과는 프로세스 메모리에 24시간 보관해 API 호출을 줄입니다. 키가 없거나 Last.fm 요청이 실패하면 기존 YouTube 검색으로 자동 폴백합니다. Last.fm의 무료 API 이용은 기본적으로 비상업 용도이므로 공개·수익화 전에 [API 이용약관](https://www.last.fm/api/tos)을 확인해야 합니다.
 
-`DJENGINE_API_KEY`와 `DJENGINE_BASE_URL`은 둘 다 설정하거나 둘 다 생략해야 합니다. API 키는 문자 수가 아니라 UTF-8 기준 32바이트 이상이어야 합니다. `DJENGINE_HOST_MUSIC_ROOT`는 음원이 든 가장 좁은 상위 폴더, `DJENGINE_HOST_REKORDBOX_XML`은 레코드박스에서 내보낸 XML 파일입니다. Compose는 두 경로를 읽기 전용으로만 엔진에 전달합니다. 스트림 URL에는 세션 전용 비밀 token이 들어 있으므로 봇은 이를 Discord 메시지, 플레이어 카드, SQLite에 표시하거나 저장하지 않습니다.
-
-`MIX_INGEST_URL`, `MIX_INGEST_SECRET`, `MIX_PUBLIC_URL`은 웹 믹싱 화면을 사용할 때 세 값을 모두 설정해야 합니다. 봇은 엔진의 실시간 상태와 파형을 HMAC-SHA256 서명(공유 비밀키로 요청 위조 여부를 확인하는 방식)으로 웹 ingest API에 전달하고, 성공한 `/디제이 시작` 응답에 해당 서버의 믹싱 화면 링크를 표시합니다.
-
 `DATABASE_PATH`는 선택값이며 기본값은 `/data/djscord.sqlite`입니다. Compose의 `bot-data` 볼륨이 이 경로를 보존하므로 `docker compose down`이나 이미지 재빌드 뒤에도 저장 정보가 남습니다. 데이터를 완전히 지우려는 경우에만 `docker compose down -v`를 사용하세요.
 
 ## 실행하기
+
+### 맥 GUI 앱으로 사용하기
+
+macOS 14.2 이상에서 `djscord Studio.app`으로 봇과 방송을 조작할 수 있습니다. Docker Desktop이 실행 중이어야 하며, 기존 `.env`의 Discord·Lavalink 설정을 사용합니다.
+
+```bash
+bash macos-app/build.sh
+open "macos-app/build/djscord Studio.app"
+```
+
+1. 앱의 **봇 시작**을 클릭합니다. 최신 봇 이미지를 빌드하고 로컬 제어 연결을 활성화합니다.
+2. 왼쪽에서 Discord 서버를 선택한 뒤 **음성 채널**과 선택적으로 **알림 채널**을 선택합니다.
+3. **앱별 오디오 믹서**에서 Chrome·rekordbox 등 송출할 앱의 스위치를 켜고 각 채널의 볼륨(0~100%)을 조절합니다. 실행 중인 앱이 자동으로 표시되며 선택은 저장됩니다. 새로 실행한 앱은 약 3초 이내에 목록에 나타납니다.
+4. **방송 시작**을 클릭하면 선택한 앱의 소리만 합쳐 방송합니다. **믹서 준비**로 Discord 송출 전에 로컬 오디오 레벨을 확인할 수도 있습니다. CLI 전체 시스템 오디오 도우미가 실행 중이면 해당 터미널에서 `Ctrl+C`로 먼저 종료하세요.
+5. **방송 종료**로 해당 서버의 방송을 끝냅니다. 다른 서버 방송이 없으면 앱별 캡처도 함께 종료합니다.
+
+각 채널의 LED 레벨 미터는 초록·노랑·빨강 구간으로 표시됩니다. 디지털 최대 음량을 0dB로 두고 −60~0dB 범위를 표시하며, 최대 음량에 가까워질수록 노랑(약 −12dB 이상), 빨강(약 −3dB 이상)이 켜집니다. 미터는 애니메이션 없이 20ms마다 갱신되며 송출 음량 자체를 변경하지 않습니다.
+
+채널을 끄면 해당 앱을 송출에서 제외하며 0%는 해당 채널을 음소거합니다. 채널 볼륨은 맥에서 듣는 앱의 원래 음량을 바꾸지 않습니다. 여러 앱의 합산 출력은 48kHz 스테레오이고, 장치가 44.1kHz인 경우 샘플링 주파수를 변환합니다. Chrome의 하위 오디오 프로세스는 Chrome 채널로 묶습니다(탭별 제어가 아닌 앱별 제어). 음악 플레이어의 기존 볼륨은 합산한 최종 Discord 출력 볼륨입니다. 앱에서 오디오를 아직 재생하지 않았으면 해당 채널은 재생 대기 상태로 표시될 수 있습니다.
+
+음악 플레이어에서 곡 제목·YouTube URL을 입력해 재생하거나 대기열에 추가하고 일시정지·계속·스킵·종료·볼륨을 조절할 수 있습니다. 제목 검색은 첫 결과를 사용합니다. 연결 중인 음성 채널을 바꾸려면 먼저 기존 재생을 종료하세요.
+
+**서버 종료** 버튼은 앱별 오디오 캡처와 이 프로젝트의 Docker 봇·Lavalink 서버를 중지합니다. 창의 닫기 버튼 또는 `⌘Q`로 앱을 종료할 때도 서버가 중지된 뒤 앱이 닫힙니다. 진행 중인 봇 빌드가 있으면 완료를 기다린 뒤 종료합니다. 서버 종료에 실패하면 오류를 표시하고 앱 종료를 취소하므로 Docker 상태를 확인한 뒤 다시 시도하세요. 설정과 저장 데이터는 삭제하지 않으며, Docker Desktop과 다른 프로젝트의 컨테이너는 종료하지 않습니다. 강제 종료나 맥의 갑작스러운 전원 종료에서는 자동 정리가 보장되지 않습니다.
+
+앱은 `compose.desktop.yaml`로 봇 제어 포트를 `127.0.0.1:8789`에만 공개하고, 자동 생성한 `.desktop-control.env`의 인증키로 요청을 인증합니다. 이 파일은 Git과 Docker 빌드에서 제외되며 현재 사용자만 읽을 수 있습니다. 프로젝트를 이동하면 앱의 **프로젝트 폴더 선택…**에서 새 경로를 지정하세요.
 
 먼저 이미지를 빌드합니다.
 
@@ -115,48 +143,6 @@ docker compose logs -f bot lavalink
 ```bash
 docker compose down
 ```
-
-### DJ Engine과 함께 실행하기
-
-이 저장소와 `djengine` 저장소가 같은 상위 폴더에 있을 때 선택적 Compose overlay를 사용할 수 있습니다.
-
-```text
-projects/
-├── djscord/
-└── djengine/
-```
-
-먼저 레코드박스에서 컬렉션 XML을 내보내고, 임의 API 키를 만듭니다.
-
-```bash
-openssl rand -base64 48
-```
-
-출력값과 음악/XML 절대경로를 앞 절의 `.env` 변수에 넣은 뒤 세 서비스를 함께 실행합니다.
-
-```bash
-docker compose -f compose.yaml -f compose.djengine.yaml up --build -d
-```
-
-처음 한 번 또는 `djengine`의 분석 규칙을 튜닝한 뒤에는 라이브러리를 다시 가져와야 합니다. 아래 `curl`은 HTTP 요청을 보내는 명령줄 도구이고, `POST`는 서버에 새 가져오기 작업을 생성한다는 뜻입니다. `Authorization` 헤더에는 `.env`의 API 키를 전달합니다.
-
-```bash
-docker compose -f compose.yaml -f compose.djengine.yaml exec engine \
-  sh -c 'curl -sS -X POST http://127.0.0.1:8787/api/v1/libraries/default/imports -H "Authorization: Bearer $DJENGINE_API_KEY"'
-```
-
-가져오기·분석이 끝나면 Discord에서 다음 순서로 사용합니다.
-
-```text
-/디제이 목록
-/디제이 시작 플레이리스트:<자동완성 선택> 에너지:빌드업 시간:60
-/디제이 일시정지
-/디제이 계속
-/디제이 스킵
-/디제이 종료
-```
-
-DJ Engine은 두 곡 이상 분석된 플레이리스트가 필요합니다. 믹스 전체가 하나의 라이브 스트림이므로 `/디제이` 전용 제어와 `/볼륨`을 제외한 명령 및 플레이어 버튼은 DJ 모드에서 비활성화됩니다. `/디제이 스킵`은 스트림을 종료하지 않고 엔진 내부의 다음 곡으로 이동하며, 일시정지·계속·스킵은 음악의 다음 마디 경계에 맞춰 실행됩니다.
 
 ## AWS에 배포하기
 
@@ -193,9 +179,6 @@ lavalink             Lavalink와 YouTube 소스 플러그인 설정
 - `lavalink-client`는 Node.js 봇과 별도 Lavalink 오디오 서버를 연결하는 라이브러리입니다. `new LavalinkManager({ client, nodes, playerOptions, sendToShard })` 형태로 사용합니다. 여기서 `client`는 Discord 봇 ID, `nodes`는 Lavalink 주소·포트·비밀번호, `playerOptions`는 자동재생과 연결 복구 정책, `sendToShard`는 Lavalink가 만든 음성 연결 데이터를 Discord로 보내는 함수입니다.
 - `zod`는 실행 전에 환경 변수의 형태를 검사하는 검증 라이브러리입니다. `z.object({...}).safeParse(process.env)` 형태로 사용하며, 현재 코드는 Discord ID·토큰의 존재 여부, Lavalink 비밀번호 길이, 포트가 올바른 정수인지 검사합니다. 설정이 잘못되면 봇이 애매한 연결 오류 대신 어떤 값을 고쳐야 하는지 바로 알려줍니다.
 - `LastFmGenreArtistProvider`는 Last.fm의 `tag.getTopArtists` HTTP API를 이 봇의 장르 시드 형식으로 바꾸는 어댑터 클래스입니다. `new LastFmGenreArtistProvider({ apiKey })`로 생성하고 `getTopArtists(genre, limit)`에 장르 태그와 가져올 인원 수를 넘깁니다. 현재 코드는 API 키, 5초 타임아웃, 식별 가능한 User-Agent를 사용하며 결과를 24시간 캐시합니다. Node.js 내장 `fetch`가 HTTP 요청을 보내고, 기존 `zod`가 응답 구조를 검사합니다.
-- `DjEngineClient`는 DJ Engine REST API를 호출하는 작은 HTTP 클라이언트입니다. 별도 라이브러리 없이 Node.js 내장 `fetch(url, options)`를 사용합니다. `url`은 요청 주소이고 `options.method`, `options.headers`, `options.body`는 각각 HTTP 동작, 인증 정보, JSON 요청 본문입니다. 현재 코드는 `baseUrl`과 32바이트 이상 `apiKey`를 받아 플레이리스트 조회, 세션 생성·제어·종료와 완료 이벤트 감시를 담당합니다.
-- `DjPlaybackService`는 Discord나 HTTP 세부 구현과 분리된 DJ 재생 수명주기 서비스입니다. `new DjPlaybackService(engine)`로 API 클라이언트를 주입하고 `start(...)`에 서버·사용자·플레이리스트·Lavalink Player 정보를 넘깁니다. 세션 생성 → 준비 대기 → Ogg 스트림 로드 → 재생 순서를 보장하며, 실패·자연 종료·봇 종료 때 엔진 세션을 한 번만 닫습니다.
-- `MixIngestClient`와 `DjMixPublisher`는 선택적인 웹 믹싱 화면으로 상태를 전달합니다. 전자는 Node.js 내장 `fetch`로 스냅샷과 파형을 HMAC 서명해 전송하고, 후자는 DJ Engine의 실시간 이벤트를 구독해 전송 순서와 종료 정리를 관리합니다. `new MixIngestClient({ baseUrl, secret })`에는 HTTPS API 주소와 공유 비밀키를, `new DjMixPublisher(engine, ingest)`에는 엔진 클라이언트와 ingest 클라이언트를 넘깁니다.
 - `DatabaseSync`는 Node.js 22의 내장 `node:sqlite` 모듈이 제공하는 SQLite 연결 클래스입니다. `new DatabaseSync(path)`로 파일을 열고 `prepare(sql).run(...)`으로 값을 저장하거나 `prepare(sql).get(...)`으로 한 행을 읽습니다. 현재 코드는 `path`에 `DATABASE_PATH`를 넘기고, SQL의 `?` 자리에 Discord 서버 ID·사용자 ID·트랙 정보를 별도 인자로 전달해 문자열 결합으로 SQL을 만들지 않습니다. 즐겨찾기, 저장 플레이리스트, 서버 설정, 추천 피드백을 별도 DB 서버 없이 보존하기 위해 사용합니다.
 - `PermissionFlagsBits.ManageGuild`는 `discord.js`가 제공하는 Discord 권한 상수로, 사용자가 `서버 관리` 권한을 갖는지 나타냅니다. `/설정` 명령의 기본 권한과 실행 시 권한 검사에 사용해 일반 사용자가 서버 전체 기본값을 바꾸지 못하게 합니다.
 - Lavalink는 Spring으로 직접 작성한 애플리케이션 코드가 아니라, 이미 빌드된 독립 Java 서버를 Docker 이미지로 실행합니다. 봇은 Lavalink에 검색·재생을 요청하고, Lavalink가 YouTube 소스 해석과 Discord용 오디오 전송을 담당합니다.
@@ -203,10 +186,16 @@ lavalink             Lavalink와 YouTube 소스 플러그인 설정
 ## 제한사항
 
 - 공개 서비스나 상업적 사용을 위한 음원 권한은 포함하지 않습니다.
-- DJ Engine의 Rubber Band 사용 조건은 공개·유료·재배포 전에 sibling 저장소의 `THIRD_PARTY_NOTICES.md`에서 별도로 해결해야 합니다.
-- 정상적인 `/디제이 종료`와 봇 종료는 DJ Engine 세션을 정리하지만, 프로세스가 `SIGKILL`이나 호스트 장애로 즉시 사라지면 엔진에 세션이 남을 수 있습니다. 현재 엔진에는 소유자별 복구 API나 만료 시간이 없으므로 이런 경우 DJ Engine을 재시작해 고아 세션을 정리해야 합니다.
 - YouTube 내부 변경이나 요청 제한으로 재생이 실패할 수 있습니다.
 - 재생 중인 곡과 대기열 자체는 재시작 복구를 지원하지 않습니다.
 - SQLite 단일 파일을 사용하므로 여러 봇 인스턴스가 동시에 같은 DB 파일을 공유하는 수평 확장 구성은 지원하지 않습니다.
 
 공개 배포 전에 YouTube 이용 정책과 음원 재전송 권한을 별도로 검토해야 합니다.
+
+## 라이선스
+
+이 프로젝트의 자체 코드는 [MIT 라이선스](LICENSE)로 공개합니다. 저작권 및 라이선스 고지를 유지하면 상업적 이용, 수정 및 재배포가 가능합니다.
+
+외부 라이브러리와 포함된 제3자 코드는 각각 원래 라이선스를 따릅니다. 이 라이선스는 외부 이미지·음원·상표에 대한 이용 권한을 부여하지 않습니다.
+
+버전별 원문과 배포 방법은 [제3자 소프트웨어 고지](THIRD_PARTY_NOTICES.md)에 정리되어 있습니다. 봇과 웹의 빌드 과정에서 고지가 생성되며, 새 라이선스 검토가 필요하면 빌드가 중단됩니다. Git에서 제외한 이미지 두 개는 기본 배포물에도 포함하지 않습니다. macOS 앱은 기본 아이콘으로 빌드되며, 이용 권한을 확인한 로컬 아이콘을 명시적으로 포함하려면 `DJSCORD_INCLUDE_LOCAL_ARTWORK=1 bash macos-app/build.sh`를 사용합니다.

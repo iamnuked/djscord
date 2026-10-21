@@ -1,5 +1,10 @@
 .git
 .env
+.desktop-control-token
+.desktop-control.env
+djscord-system-audio
+macos-app/build
+macos-app/Assets/AppIcon.png
 .env.*
 !.env.example
 .pnpm-store

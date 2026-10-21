@@ -3,7 +3,6 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_root=$(dirname "$script_dir")
-engine_root=${DJENGINE_SOURCE_ROOT:-$(dirname "$project_root")/djengine}
 stack_name=${STACK_NAME:-djscord-prod}
 aws_region=${AWS_REGION:-ap-northeast-2}
 
@@ -16,19 +15,8 @@ if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
   echo "커밋되지 않은 변경사항이 있어 릴리스를 만들 수 없습니다." >&2
   exit 1
 fi
-if [ ! -f "$engine_root/Dockerfile" ] || [ ! -d "$engine_root/.git" ]; then
-  echo "djengine 저장소를 찾지 못했습니다: $engine_root" >&2
-  exit 1
-fi
-engine_changes=$(git -C "$engine_root" status --porcelain --untracked-files=all \
-  | sed '/^?? rekordbox\.xml$/d')
-if [ -n "$engine_changes" ]; then
-  echo "djengine에 커밋되지 않은 변경사항이 있어 릴리스를 만들 수 없습니다." >&2
-  exit 1
-fi
 
 image_tag=$(git rev-parse --short=12 HEAD)
-engine_image_tag=$(git -C "$engine_root" rev-parse --short=12 HEAD)
 ecr_repository_uri=$(aws cloudformation describe-stacks \
   --region "$aws_region" \
   --stack-name "$stack_name" \
@@ -39,18 +27,9 @@ release_bucket=$(aws cloudformation describe-stacks \
   --stack-name "$stack_name" \
   --query "Stacks[0].Outputs[?OutputKey=='ReleaseBucketName'].OutputValue | [0]" \
   --output text)
-engine_ecr_repository_uri=$(aws cloudformation describe-stacks \
-  --region "$aws_region" \
-  --stack-name "$stack_name" \
-  --query "Stacks[0].Outputs[?OutputKey=='EngineEcrRepositoryUri'].OutputValue | [0]" \
-  --output text)
 
 if [ -z "$ecr_repository_uri" ] || [ "$ecr_repository_uri" = "None" ]; then
   echo "CloudFormation에서 ECR 저장소를 찾지 못했습니다." >&2
-  exit 1
-fi
-if [ -z "$engine_ecr_repository_uri" ] || [ "$engine_ecr_repository_uri" = "None" ]; then
-  echo "CloudFormation에서 djengine ECR 저장소를 찾지 못했습니다." >&2
   exit 1
 fi
 
@@ -63,18 +42,25 @@ trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
 source_directory="$temporary_directory/source"
 mkdir -p "$source_directory"
 git archive HEAD | tar -x -C "$source_directory"
-engine_source_directory="$temporary_directory/engine-source"
-mkdir -p "$engine_source_directory"
-git -C "$engine_root" archive HEAD | tar -x -C "$engine_source_directory"
 
-engine_test_image="djengine-rust-test:$engine_image_tag"
+bot_test_image="djscord-bot-test:$image_tag"
+website_test_image="djscord-website-test:$image_tag"
+
+# Every independently deployed surface is verified from the exact archived
+# source that will be published. A dirty working tree cannot bypass this gate.
 docker buildx build \
   --platform linux/amd64 \
-  --target rust-test \
+  --target test \
   --load \
-  --tag "$engine_test_image" \
-  "$engine_source_directory"
-docker run --rm "$engine_test_image"
+  --tag "$bot_test_image" \
+  "$source_directory"
+docker buildx build \
+  --platform linux/amd64 \
+  --target test \
+  --load \
+  --tag "$website_test_image" \
+  --file "$source_directory/website/Dockerfile" \
+  "$source_directory/website"
 
 bot_image="$ecr_repository_uri:$image_tag"
 repository_name=${ecr_repository_uri#*/}
@@ -93,25 +79,11 @@ else
     "$source_directory"
 fi
 
-engine_image="$engine_ecr_repository_uri:$engine_image_tag"
-engine_repository_name=${engine_ecr_repository_uri#*/}
-if aws ecr describe-images \
-  --region "$aws_region" \
-  --repository-name "$engine_repository_name" \
-  --image-ids imageTag="$engine_image_tag" \
-  >/dev/null 2>&1; then
-  echo "이미 게시된 djengine ECR 이미지를 재사용합니다: $engine_image"
-else
-  docker buildx build \
-    --platform linux/amd64 \
-    --target runtime \
-    --tag "$engine_image" \
-    --push \
-    "$engine_source_directory"
-fi
-
 bundle_directory="$temporary_directory/bundle"
 mkdir -p "$bundle_directory/deploy" "$bundle_directory/lavalink"
+cp "$source_directory/LICENSE" "$bundle_directory/LICENSE"
+cp "$source_directory/THIRD_PARTY_NOTICES.md" "$bundle_directory/THIRD_PARTY_NOTICES.md"
+cp -R "$source_directory/licenses" "$bundle_directory/licenses"
 cp "$source_directory/compose.prod.yaml" "$bundle_directory/compose.prod.yaml"
 cp "$source_directory/lavalink/application.yml" "$bundle_directory/lavalink/application.yml"
 cp "$source_directory/deploy/deploy.sh" "$bundle_directory/deploy/deploy.sh"
@@ -121,12 +93,11 @@ cp "$source_directory/deploy/backup-sqlite.sh" "$bundle_directory/deploy/backup-
 cp "$source_directory/deploy/restore-sqlite.sh" "$bundle_directory/deploy/restore-sqlite.sh"
 
 archive_path="$temporary_directory/djscord-$image_tag.tar.gz"
-tar -C "$bundle_directory" -czf "$archive_path" compose.prod.yaml deploy lavalink
+tar -C "$bundle_directory" -czf "$archive_path" compose.prod.yaml deploy lavalink LICENSE THIRD_PARTY_NOTICES.md licenses
 release_uri="s3://$release_bucket/releases/$image_tag.tar.gz"
 aws s3 cp "$archive_path" "$release_uri" --region "$aws_region" >/dev/null
 
 echo "릴리스를 게시했습니다."
 echo "이미지: $bot_image"
 echo "배포 묶음: $release_uri"
-echo "djengine 이미지: $engine_image"
-echo "다음 명령: $project_root/deploy/remote-deploy.sh $image_tag $engine_image_tag"
+echo "다음 명령: $project_root/deploy/remote-deploy.sh $image_tag"

@@ -1,0 +1,8 @@
+node_modules
+dist
+.next
+.wrangler
+public/og.png
+.env
+.env.*
+!.env.example

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.djscord.system-audio</string>
+  <key>CFBundleName</key>
+  <string>djscord System Audio</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>맥에서 재생되는 시스템 오디오를 Discord 음성 채널로 방송합니다. 화면과 마이크는 캡처하지 않습니다.</string>
+</dict>
+</plist>

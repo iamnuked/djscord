@@ -6,7 +6,7 @@ import { buildPlayerCard, type PlayerCardSnapshot } from "../src/discord/player-
 
 function track(
   identifier: string,
-  options: Partial<Pick<MusicTrack, "isStream" | "origin" | "sourceName" | "uri">> = {}
+  options: Partial<Pick<MusicTrack, "isStream" | "origin">> = {}
 ): MusicTrack {
   return {
     artworkUrl: "https://example.com/art.jpg",
@@ -18,9 +18,9 @@ function track(
     isStream: options.isStream ?? false,
     origin: options.origin ?? "requested",
     requesterId: "user-1",
-    sourceName: options.sourceName ?? "youtube",
+    sourceName: "youtube",
     title: `track-${identifier}`,
-    uri: options.uri ?? `https://youtube.com/watch?v=${identifier}`
+    uri: `https://youtube.com/watch?v=${identifier}`
   };
 }
 
@@ -95,27 +95,6 @@ describe("buildPlayerCard", () => {
 
     expect(paused.embeds[0]?.toJSON().description).toContain("LIVE");
     expect(firstButton).toMatchObject({ emoji: { name: "▶️" }, style: ButtonStyle.Success });
-  });
-
-  it("DJ Engine 라이브 소스는 비밀 URL을 링크하지 않고 플레이어 버튼을 모두 비활성화한다", () => {
-    const secretAudioUrl = "http://djengine:8787/api/v1/sessions/session-1/audio.ogg?token=secret";
-    const card = buildPlayerCard(
-      snapshot({
-        current: track("dj-mix", {
-          isStream: true,
-          sourceName: "djengine",
-          uri: secretAudioUrl
-        }),
-        feedback: "like"
-      }),
-      "session-1"
-    );
-    const embed = card.embeds[0]?.toJSON();
-    const buttons = card.components.flatMap((row) => row.toJSON().components);
-
-    expect(embed?.url).toBeUndefined();
-    expect(JSON.stringify(embed)).not.toContain(secretAudioUrl);
-    expect(buttons.every(({ disabled }) => disabled)).toBe(true);
   });
 
   it("Ko-fi URL이 없으면 후원 버튼만 숨기고 음악 제어는 유지한다", () => {
